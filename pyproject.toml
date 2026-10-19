@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vouching-recon-agent"
+version = "0.1.0"
+description = "Vouching & reconciliation agent: LLM reasoning on top of a deterministic calculation engine and an immutable evidence layer."
+requires-python = ">=3.10"
+dependencies = ["pydantic>=2.5"]
+
+[project.optional-dependencies]
+fuzzy = ["rapidfuzz>=3.0"]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+dev = ["pytest>=8.0", "rapidfuzz>=3.0"]
+
+[project.scripts]
+vra = "vra.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
