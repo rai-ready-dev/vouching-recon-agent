@@ -144,9 +144,12 @@ class ReconciliationWorkflow(_Base):
 class DocumentVouchingWorkflow(_Base):
     """Vouch any ledger entries (purchases, sales, expenses, payroll, assets, ...) to supporting documents."""
 
+    on_progress = None  # optional callable(done, total), e.g. to show progress in a UI
+
     def run(self, transactions: list[Transaction], vouchers: list[Voucher], sources: list[SourceFile],
             period: tuple[date, date] | None = None, programmes: dict | None = None,
-            intake_issues: list[str] | None = None) -> RunReport:
+            intake_issues: list[str] | None = None,
+            forced_links: dict[str, str | None] | None = None) -> RunReport:
         programmes = programmes or load_programmes()
         for rec in (*sources, *vouchers, *transactions):
             self.store.add(rec, source=type(rec).__name__)
@@ -155,7 +158,8 @@ class DocumentVouchingWorkflow(_Base):
                                           "period": [d.isoformat() for d in period] if period else None})
         by_src = {s.id: s for s in sources}
         by_vid = {v.id: v for v in vouchers}
-        links = link_documents(transactions, vouchers, by_src, self.policy)
+        links = link_documents(transactions, vouchers, by_src, self.policy, forced_links)
+        self.links = links
         usage: dict[str, list[Transaction]] = defaultdict(list)
         for t in transactions:
             if links[t.id].voucher_id:
@@ -174,7 +178,9 @@ class DocumentVouchingWorkflow(_Base):
             documents=[{"file": s.filename, "kind": s.kind, "method": s.method, "sha256": s.sha256[:16]}
                        for s in sources])
         used_types: dict[str, list[str]] = {}
-        for t in sorted(transactions, key=lambda x: (x.date, x.id)):
+        for n, t in enumerate(sorted(transactions, key=lambda x: (x.date, x.id))):
+            if self.on_progress:
+                self.on_progress(n, len(transactions))
             key, steps = programme_for(t.type, programmes)
             used_types[key] = [s["test"] for s in steps]
             if key == "other" and t.type.lower() != "other":

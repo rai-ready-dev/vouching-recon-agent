@@ -20,12 +20,29 @@ An audit agent that pairs **LLM reasoning** with a **deterministic calculation e
          Workpaper + hash-chained audit log ─► Human reviewer
 ```
 
-## Quick start
+## Quick start (web app)
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1            # macOS/Linux: source .venv/bin/activate
+pip install -e ".[dev]"
+vra-web serve --solo --open            # opens http://localhost:8000
+```
+
+First visit: create the administrator account. Then **New engagement -> upload the ledger (Excel/CSV) and the
+supporting documents -> Run**. Review exceptions with the document beside each finding, correct anything the
+agent misread, decide (resolve / confirm exception / follow-up), then sign off and download the Word / Excel
+workpaper. Full team guide: [docs/WEB_APP.md](docs/WEB_APP.md).
+
+* `--solo` lets one person sign off their own run (testing). Leave it off for teams: a different reviewer must sign off.
+* Put the Foundry settings in a `.env` file in the folder you start from (see `.env.example`); the server loads it
+  automatically. Real environment variables win over the file.
+* Data (database, uploaded documents, run outputs) lives in `./vra_data` (change with `--data-dir`). Back this folder up.
+
+## Quick start (command line)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-pytest                                                  # 43 tests
+pytest                                                  # 61 tests
 vra demo-docs                                           # mixed-format documents + ledger -> demo_docs_output/
 vra demo                                                # structured three-way-match + bank-rec demos
 ```
@@ -103,14 +120,15 @@ src/vra/
   ingest.py  extract.py  intake.py  ledger.py  linking.py  programmes.py      # document vouching
   llm.py (Foundry client + OCR)  analysts.py  verifier.py  reports.py  orchestrator.py
   engine/     recompute · three_way · duplicates · matching · bank_rec · aging
-  audit_log.py workpaper.py loaders.py sample_data.py sample_docs.py evaluation.py cli.py
-tests/        43 tests: formats, extraction grounding, linking, programmes, adversarial model/document cases
+  audit_log.py workpaper.py loaders.py sample_data.py sample_docs.py evaluation.py envfile.py cli.py
+  web/        app.py (API) service.py runner.py exports.py auth.py db.py main.py static/ (the UI)
+tests/        61 tests: formats, extraction grounding, linking, programmes, web API, permissions, upload safety
 docs/         ARCHITECTURE.md (target design and roadmap)
 ```
 
 ## Known limits / next steps
 
-See `docs/ARCHITECTURE.md`. The main gap is a **web app for the team** (upload, review queue, sign-off,
-roles). Also open: OCR/LLM paths untested against live Foundry, multi-voucher statements need the LLM
-extractor, split payments (one entry, several documents) are not linked yet, FX conversion, sampling support,
-reviewer feedback loop, SSO/RBAC and data-retention controls.
+See `docs/ARCHITECTURE.md` and `docs/WEB_APP.md`. Open items: Foundry paths untested against a live
+deployment; SQLite is single-server (move to Postgres for larger teams); sign-in is local accounts (Microsoft
+Entra ID SSO is the planned replacement); split payments (one entry, several documents) are not linked; FX
+conversion; sampling support; the structured three-way-match and bank-rec workflows are command-line only.

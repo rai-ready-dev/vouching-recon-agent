@@ -80,7 +80,9 @@ def _sheets(path: Path):
         yield "", [list(r) for r in csv.reader(text.splitlines(), delimiter="\t" if path.suffix == ".tsv" else ",")]
 
 
-def load_transactions(path: str | Path, default_type: str = "purchase", dayfirst: bool = True) -> list[Transaction]:
+def load_transactions_with_problems(path: str | Path, default_type: str = "purchase",
+                                    dayfirst: bool = True) -> tuple[list[Transaction], list[str]]:
+    """Like `load_transactions` but returns the skipped-row problems instead of storing them globally."""
     path = Path(path)
     sheets = list(_sheets(path))
     out: list[Transaction] = []
@@ -122,7 +124,12 @@ def load_transactions(path: str | Path, default_type: str = "purchase", dayfirst
                 approver=str(get("approver") or "").strip()))
     if not out:
         raise LedgerError("no usable ledger rows found" + (": " + "; ".join(problems) if problems else ""))
-    load_transactions.last_problems = problems  # surfaced by the CLI / intake report
+    return out, problems
+
+
+def load_transactions(path: str | Path, default_type: str = "purchase", dayfirst: bool = True) -> list[Transaction]:
+    out, problems = load_transactions_with_problems(path, default_type, dayfirst)
+    load_transactions.last_problems = problems  # convenience for the CLI; the web app uses the function above
     return out
 
 

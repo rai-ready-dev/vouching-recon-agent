@@ -33,7 +33,9 @@ purchases, sales, expenses, payroll and assets.
 * Evidence hashes, tamper-evident audit log, policy version stamped on each run.
 
 ## Roadmap to a team application
-1. **Web app (next).** FastAPI backend + browser UI: create an engagement, upload ledger and documents,
+0. **Done:** web app (see WEB_APP.md): engagements, upload, run, review queue with document preview, corrections,
+   decisions, sign-off with segregation of duties, Word/Excel exports, activity log, local accounts, SQLite.
+1. ~~Web app~~ (remaining ideas: FastAPI backend + browser UI: create an engagement, upload ledger and documents,
    run, review queue with the document beside each finding, accept/override with reason, sign-off, export
    workpaper to Word/Excel/PDF.
 2. **Storage.** Postgres (runs, findings, decisions, users) + object storage for documents (Azure Blob).

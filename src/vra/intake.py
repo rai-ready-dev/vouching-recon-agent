@@ -24,7 +24,9 @@ def collect_files(folder: str | Path) -> list[Path]:
     return [f for f in files if not f.name.startswith(("~$", ".")) and f.suffix.lower() in SUPPORTED_EXT]
 
 
-def build_vouchers(folder: str | Path, extractor: Extractor, ocr: OcrEngine | None = None) -> IntakeResult:
+def build_vouchers(folder: str | Path, extractor: Extractor, ocr: OcrEngine | None = None,
+                   progress=None) -> IntakeResult:
+    """`progress(done, total, filename)` is called before each file if given."""
     res = IntakeResult()
     root = Path(folder) if Path(folder).is_dir() else Path(folder).parent
     skipped = [f.name for f in Path(folder).rglob("*") if f.is_file() and f.suffix.lower() not in SUPPORTED_EXT
@@ -32,8 +34,11 @@ def build_vouchers(folder: str | Path, extractor: Extractor, ocr: OcrEngine | No
     for name in skipped:
         res.issues.append(f"{name}: unsupported file type, not read")
 
-    for path in collect_files(folder):
+    all_files = collect_files(folder)
+    for n, path in enumerate(all_files):
         rel = path.relative_to(root).as_posix()
+        if progress:
+            progress(n, len(all_files), rel)
         try:
             doc = ingest_path(path, root)
         except IngestError as exc:

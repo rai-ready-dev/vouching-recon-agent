@@ -31,7 +31,7 @@ _PROCEDURE = {
 }
 
 
-def render_workpaper(report: RunReport, store: EvidenceStore) -> str:
+def render_workpaper(report: RunReport, store: EvidenceStore | None = None, manifest=None) -> str:
     counts = report.by_disposition()
     out = [
         f"# Workpaper (DRAFT): {_TITLE[report.domain]}",
@@ -107,5 +107,5 @@ def render_workpaper(report: RunReport, store: EvidenceStore) -> str:
              "reviewer attention; remaining items were cleared by deterministic tests. "
              "This conclusion is a draft and is not final until signed off by a reviewer."),
             "", "## Evidence manifest", "", "| Evidence id | SHA-256 |", "|---|---|"]
-    out += [f"| {r.id} | `{r.sha256[:16]}…` |" for r in store.manifest()]
+    out += [f"| {r.id} | `{r.sha256[:16]}…` |" for r in (manifest if manifest is not None else store.manifest())]
     return "\n".join(out) + "\n"

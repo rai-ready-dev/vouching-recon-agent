@@ -44,9 +44,16 @@ def score_pair(t: Transaction, v: Voucher, filename: str, p: Policy) -> tuple[fl
 
 
 def link_documents(txns: list[Transaction], vouchers: list[Voucher],
-                   sources: dict[str, SourceFile], policy: Policy) -> dict[str, Link]:
+                   sources: dict[str, SourceFile], policy: Policy,
+                   forced: dict[str, str | None] | None = None) -> dict[str, Link]:
+    """`forced` = reviewer decisions: txn id -> voucher id (or None = 'there is no document')."""
     out: dict[str, Link] = {}
+    known = {v.id for v in vouchers}
     for t in txns:
+        if forced and t.id in forced and (forced[t.id] is None or forced[t.id] in known):
+            vid = forced[t.id]
+            out[t.id] = Link(t.id, vid, 1.0 if vid else 0.0, ("manual link",) if vid else ("marked: no document",))
+            continue
         ranked = []
         for v in vouchers:
             s, why = score_pair(t, v, sources[v.source_doc].filename if v.source_doc in sources else v.source_doc, policy)

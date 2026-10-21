@@ -5,3 +5,6 @@ __pycache__/
 .env
 demo_output/
 out/
+vra_data/
+demo_docs_output/
+*.sqlite3

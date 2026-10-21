@@ -7,7 +7,8 @@ name = "vouching-recon-agent"
 version = "0.1.0"
 description = "Vouching & reconciliation agent: LLM reasoning on top of a deterministic calculation engine and an immutable evidence layer."
 requires-python = ">=3.10"
-dependencies = ["pydantic>=2.5", "pypdf>=4.0", "openpyxl>=3.1", "python-docx>=1.1"]
+dependencies = ["pydantic>=2.5", "pypdf>=4.0", "openpyxl>=3.1", "python-docx>=1.1",
+                "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 
 [project.optional-dependencies]
 fuzzy = ["rapidfuzz>=3.0"]
@@ -15,13 +16,17 @@ anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.40"]
 foundry = ["openai>=1.40", "azure-identity>=1.17"]
 scan = ["pypdfium2>=4.30"]
-dev = ["pytest>=8.0", "rapidfuzz>=3.0"]
+dev = ["pytest>=8.0", "rapidfuzz>=3.0", "httpx>=0.27"]
 
 [project.scripts]
 vra = "vra.cli:main"
+vra-web = "vra.web.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"vra.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

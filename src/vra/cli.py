@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .analysts import ChatAnalyst, build_analyst
 from .audit_log import AuditLog
+from .envfile import load_env_file
 from .evaluation import score
 from .evidence import EvidenceStore
 from .extract import HeuristicExtractor, LLMExtractor
@@ -134,6 +135,7 @@ def main(argv: list[str] | None = None) -> None:
     ex.add_argument("--out", default="out")
     args = ap.parse_args(argv)
 
+    load_env_file(".env")
     policy = Policy.from_file(args.policy) if args.policy else Policy()
     analyst, extractor, ocr = _build_stack(args)
 
