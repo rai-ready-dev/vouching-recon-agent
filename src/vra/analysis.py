@@ -19,6 +19,10 @@ class Classification(str, Enum):
     BANK_ITEM_UNRECORDED = "bank_item_unrecorded"
     OUTSTANDING_ITEM = "outstanding_item"
     ROUNDING_OR_TOLERANCE = "rounding_or_tolerance"
+    AMOUNT_DIFFERENCE = "amount_difference"
+    CUTOFF = "cutoff"
+    AUTHORISATION = "authorisation"
+    DATA_QUALITY = "data_quality"
     POSSIBLE_FRAUD_RISK = "possible_fraud_risk"
     OTHER = "other"
 

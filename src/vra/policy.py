@@ -30,6 +30,10 @@ class Policy:
     trivial_amount: Decimal = Decimal("5.00")
     auto_clear_limit: Decimal = Decimal("5000")   # clean invoices above this are still sampled
     auto_clear_confidence: float = 0.85
+    # document vouching
+    min_extraction_confidence: float = 0.70
+    link_threshold: float = 0.50
+    link_date_window_days: int = 60
     # reconciling items
     outstanding_days: int = 30
     stale_days: int = 90

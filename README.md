@@ -23,40 +23,60 @@ An audit agent that pairs **LLM reasoning** with a **deterministic calculation e
 ## Quick start
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-pytest                       # 24 tests
-vra demo                     # runs both workflows on seeded data -> demo_output/
+pytest                                                  # 43 tests
+vra demo-docs                                           # mixed-format documents + ledger -> demo_docs_output/
+vra demo                                                # structured three-way-match + bank-rec demos
 ```
 
-`vra demo` writes, per workflow: `*_workpaper.md` (draft audit workpaper), `*_report.json`,
-`*_evidence_manifest.json` (SHA-256 of every record) and `*_audit_log.jsonl` (hash-chained).
+## What it can vouch
 
-Your own data:
+**Any ledger entry against any supporting document**, using a *vouching programme* chosen by the entry's
+`Type` (purchase, sales, expense, payroll, fixed_asset, bank_payment, other; aliases like `revenue`,
+`capex`, `salary` are understood; unknown types fall back to `other`).
+
+| Step | What happens |
+|---|---|
+| Read | PDF (text layer), scans/images (via OCR engine), Excel, Word, CSV, text, email. Unreadable, encrypted, empty or unsupported files are **reported, never skipped silently**. |
+| Extract | Date, total, tax, currency, parties, document numbers, approvals, document type. Heuristic offline extractor, or an LLM extractor that must return a **verbatim quote** for every field; values not found in the document are dropped. |
+| Link | Each ledger entry is linked to its best document by reference, amount, counterparty and date (explainable score). |
+| Test | Per-type programme: right document type, amount agrees, counterparty named, reference agrees, currency, date/cut-off, document not reused, approval above limit, extraction quality. |
+| Report | Exceptions with evidence, documents that could not be read, and documents matching **no** ledger entry (possible unrecorded items). |
 
 ```bash
-vra vouch --data my_folder          # invoices.json, purchase_orders.json, goods_receipts.json
-vra reconcile --bank bank.csv --gl gl.csv --as-of 2026-03-31
-vra --policy my_policy.json vouch --data my_folder    # thresholds live in config, not prompts
+vra extract    --docs my_docs                     # just show what was read from each document
+vra vouch-docs --ledger gl.xlsx --docs my_docs --period-start 2026-01-01 --period-end 2026-03-31 --out out
+vra vouch-docs --ledger gl.xlsx --docs my_docs --programmes my_programmes.json    # add/change tests per type
 ```
-Schemas are in `src/vra/records.py` (the demo writes example JSON to `demo_output/data/`).
-Bank/GL CSV columns: `id,date,amount,reference,description` (GL also needs `account`).
+Ledger: `.xlsx`/`.csv` with a header row containing at least Date and Amount (or Debit/Credit). Recognised
+columns: Type, Date, Counterparty/Vendor/Customer, Reference/Invoice No, Amount, Currency, Approver,
+Account, Description (see `ledger.py` for aliases).
 
-## Plugging in a model
+Programme override file (JSON): `{"lease": [{"test": "amount_agrees"}, {"test": "date_ok", "max_days_after": 10}]}`.
+Available tests: `doc_type, amount_agrees, counterparty_agrees, reference_agrees, currency_agrees, date_ok,
+voucher_not_reused, approval_present, extraction_quality`.
 
-The default `rule` analyst needs no API key. To use a real model:
+### Structured workflows (earlier modules)
+`vra vouch --data folder` (invoice/PO/GRN three-way match with cumulative billing and duplicate/split
+detection) and `vra reconcile --bank bank.csv --gl gl.csv --as-of DATE` (bank rec with one-to-many matching,
+ageing and proof). `vra demo` runs both on seeded data.
 
+## Using GPT from Microsoft Foundry
+
+1. In Foundry, deploy a chat model (use a vision-capable one if you want scans read). Note the **deployment name**.
+2. `pip install -e ".[foundry]"` (add `".[scan]"` to OCR scanned PDFs).
+3. Set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT` (see `.env.example`). Either set
+   `AZURE_OPENAI_API_KEY`, or leave it empty and run `az login`: the app then signs in with Microsoft Entra ID.
+4. Run with the pieces you want to switch on:
 ```bash
-pip install -e ".[anthropic]"   # or ".[openai]"
-export ANTHROPIC_API_KEY=...    vra --analyst anthropic demo
-export VRA_OPENAI_BASE_URL=https://your-endpoint/v1 VRA_MODEL=<model> OPENAI_API_KEY=...
-vra --analyst openai demo       # any OpenAI-compatible endpoint, e.g. your GPT-6 Astra deployment
+vra --extractor foundry --analyst foundry --ocr foundry demo-docs
 ```
-> The LLM adapters (`src/vra/analysts.py`) are written but **not exercised by the test-suite** (no network
-> in CI). Try them on the demo data first; if a model's output fails validation the case is escalated and
-> the rule-based baseline is used, never silently accepted.
-
-To add another provider, subclass `_JsonAnalyst` and implement `_call(system, user) -> str`.
+`--extractor` reads documents with the model (with quote checking), `--analyst` has it classify and explain
+exceptions (checked by the verifier), `--ocr` has it transcribe scans. Each is independent; the default is
+fully offline. **These Foundry code paths are written but untested against a live deployment**; expect small
+adjustments (API version, parameter support of your model) on first use. Confirm with your firm that sending
+client documents to your Foundry tenant is approved.
 
 ## Design rules (what makes it trustworthy)
 
@@ -80,32 +100,17 @@ To add another provider, subclass `_JsonAnalyst` and implement `_call(system, us
 ```
 src/vra/
   records.py  evidence.py  findings.py  policy.py  money.py  textutil.py
+  ingest.py  extract.py  intake.py  ledger.py  linking.py  programmes.py      # document vouching
+  llm.py (Foundry client + OCR)  analysts.py  verifier.py  reports.py  orchestrator.py
   engine/     recompute · three_way · duplicates · matching · bank_rec · aging
-  analysis.py analysts.py  verifier.py  reports.py (routing)  orchestrator.py
-  audit_log.py workpaper.py loaders.py sample_data.py evaluation.py cli.py
-tests/        unit tests + end-to-end seeded-error recall tests + adversarial analyst tests
+  audit_log.py workpaper.py loaders.py sample_data.py sample_docs.py evaluation.py cli.py
+tests/        43 tests: formats, extraction grounding, linking, programmes, adversarial model/document cases
+docs/         ARCHITECTURE.md (target design and roadmap)
 ```
 
 ## Known limits / next steps
 
-- **No document extraction yet.** Input is structured JSON/CSV. Next: PDF/OCR extraction stage emitting the
-  same records plus field confidence and page coordinates, with validation (line sums, tax) before matching.
-- The LLM currently receives a prepared case bundle; a tool-calling loop (LLM requests extra engine calls) is
-  the planned next step.
-- Matching is greedy by pass with subset search capped by `max_pool`/`max_group`; large many-to-many sets
-  need an optimiser (e.g. OR-Tools).
-- Fuzzy-duplicate and split-invoice rules are deliberately sensitive (recall first) and will need tuning
-  per client; the demo data shows overlap between them (e.g. a split pair is also a same-amount pair).
-- Not yet: FX, multi-currency, AR/AP sub-ledger-to-GL tie-out, fixed-asset vouching, reviewer UI and the
-  feedback loop that turns overrides into vendor aliases/rules, security hardening (SSO/RBAC).
-- Evaluation (`evaluation.py`) scores recall against seeded errors; extend with real anonymised engagements
-  and run in shadow mode before relying on auto-clearing.
-
-## Moving this to its own repo
-
-This folder is self-contained:
-```bash
-cp -r vouching-recon-agent ~/vouching-recon-agent && cd ~/vouching-recon-agent
-git init && git add . && git commit -m "Initial commit" && git branch -M main
-git remote add origin git@github.com:<you>/vouching-recon-agent.git && git push -u origin main
-```
+See `docs/ARCHITECTURE.md`. The main gap is a **web app for the team** (upload, review queue, sign-off,
+roles). Also open: OCR/LLM paths untested against live Foundry, multi-voucher statements need the LLM
+extractor, split payments (one entry, several documents) are not linked yet, FX conversion, sampling support,
+reviewer feedback loop, SSO/RBAC and data-retention controls.

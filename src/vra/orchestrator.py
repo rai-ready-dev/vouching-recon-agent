@@ -21,7 +21,10 @@ from .evidence import EvidenceStore
 from .findings import Finding
 from .money import q2
 from .policy import Policy
-from .records import BankLine, GLEntry, GoodsReceipt, Invoice, PurchaseOrder
+from .linking import link_documents
+from .programmes import Ctx, load_programmes, programme_for, run_programme
+from .records import (BankLine, GLEntry, GoodsReceipt, Invoice, PurchaseOrder, SourceFile,
+                      Transaction, Voucher)
 from .reports import (CaseResult, ClearedItem, Disposition, MatchRecord, RunReport,
                       route_case, route_clean, route_match)
 from .verifier import verify_analysis
@@ -135,4 +138,58 @@ class ReconciliationWorkflow(_Base):
             by_subject[f.subject_id].append(f)
         for subject, fs in by_subject.items():
             report.cases.append(self._case("bank_rec", subject, fs))
+        return self._finish(report)
+
+
+class DocumentVouchingWorkflow(_Base):
+    """Vouch any ledger entries (purchases, sales, expenses, payroll, assets, ...) to supporting documents."""
+
+    def run(self, transactions: list[Transaction], vouchers: list[Voucher], sources: list[SourceFile],
+            period: tuple[date, date] | None = None, programmes: dict | None = None,
+            intake_issues: list[str] | None = None) -> RunReport:
+        programmes = programmes or load_programmes()
+        for rec in (*sources, *vouchers, *transactions):
+            self.store.add(rec, source=type(rec).__name__)
+        self._start("document_vouching", {"transactions": len(transactions), "documents": len(sources),
+                                          "vouchers": len(vouchers),
+                                          "period": [d.isoformat() for d in period] if period else None})
+        by_src = {s.id: s for s in sources}
+        by_vid = {v.id: v for v in vouchers}
+        links = link_documents(transactions, vouchers, by_src, self.policy)
+        usage: dict[str, list[Transaction]] = defaultdict(list)
+        for t in transactions:
+            if links[t.id].voucher_id:
+                usage[links[t.id].voucher_id].append(t)
+        ctx = Ctx(self.policy, period, usage)
+        for t in transactions:
+            lk = links[t.id]
+            self.log.append("linked", {"txn": t.evidence_id, "voucher": lk.voucher_id, "score": lk.score,
+                                       "reasons": list(lk.reasons)})
+
+        report = RunReport(
+            domain="document_vouching", policy_version=self.policy.version, analyst=self.analyst.name,
+            population=len(transactions), population_value=q2(sum((t.amount for t in transactions), Decimal(0))),
+            period=f"{period[0]} to {period[1]}" if period else "",
+            intake_issues=list(intake_issues or []),
+            documents=[{"file": s.filename, "kind": s.kind, "method": s.method, "sha256": s.sha256[:16]}
+                       for s in sources])
+        used_types: dict[str, list[str]] = {}
+        for t in sorted(transactions, key=lambda x: (x.date, x.id)):
+            key, steps = programme_for(t.type, programmes)
+            used_types[key] = [s["test"] for s in steps]
+            if key == "other" and t.type.lower() != "other":
+                self.log.append("unknown_type", {"txn": t.evidence_id, "type": t.type, "used": "other"})
+            lk = links[t.id]
+            v = by_vid.get(lk.voucher_id) if lk.voucher_id else None
+            fs = run_programme(t, v, lk, steps, ctx)
+            if fs:
+                report.cases.append(self._case("document_vouching", t.evidence_id, fs))
+            else:
+                d = route_clean(t.amount, self.policy)
+                report.cleared.append(ClearedItem(subject_id=t.evidence_id, amount=t.amount, disposition=d))
+                self.log.append("item_cleared", {"subject": t.evidence_id, "disposition": d.value})
+        report.programmes = used_types
+        linked = {l.voucher_id for l in links.values() if l.voucher_id}
+        report.unlinked_documents = sorted({by_src[v.source_doc].filename for v in vouchers
+                                            if v.id not in linked and v.source_doc in by_src})
         return self._finish(report)

@@ -40,6 +40,18 @@ _CLASS = {
     FindingCode.GL_ITEM_NOT_CLEARED: Classification.OUTSTANDING_ITEM,
     FindingCode.STALE_GL_ITEM: Classification.OUTSTANDING_ITEM,
     FindingCode.TOLERANCE_DIFFERENCE: Classification.ROUNDING_OR_TOLERANCE,
+    FindingCode.NO_VOUCHER: Classification.MISSING_DOCUMENT,
+    FindingCode.WRONG_DOC_TYPE: Classification.MISSING_DOCUMENT,
+    FindingCode.AMOUNT_MISMATCH: Classification.AMOUNT_DIFFERENCE,
+    FindingCode.CURRENCY_MISMATCH: Classification.AMOUNT_DIFFERENCE,
+    FindingCode.COUNTERPARTY_MISMATCH: Classification.UNAUTHORISED_VENDOR_OR_ITEM,
+    FindingCode.REFERENCE_MISMATCH: Classification.DATA_QUALITY,
+    FindingCode.CUTOFF_ISSUE: Classification.CUTOFF,
+    FindingCode.DATE_MISMATCH: Classification.TIMING,
+    FindingCode.VOUCHER_REUSED: Classification.DUPLICATE,
+    FindingCode.MISSING_APPROVAL: Classification.AUTHORISATION,
+    FindingCode.LOW_CONFIDENCE_EXTRACTION: Classification.DATA_QUALITY,
+    FindingCode.FIELD_MISSING: Classification.DATA_QUALITY,
 }
 
 _ACTION = {
@@ -53,6 +65,11 @@ _ACTION = {
     Classification.BANK_ITEM_UNRECORDED: "Obtain bank advice and post the missing entry.",
     Classification.OUTSTANDING_ITEM: "Verify clearing in the bank statement after period end; reverse if stale.",
     Classification.ROUNDING_OR_TOLERANCE: "Accept if immaterial in aggregate; track cumulative leakage.",
+    Classification.AMOUNT_DIFFERENCE: "Agree the amount to the source document; obtain a corrected document or adjust the ledger.",
+    Classification.CUTOFF: "Confirm the correct accounting period; consider accrual or reversal.",
+    Classification.TIMING: "Check the document date against the posting date and payment terms.",
+    Classification.AUTHORISATION: "Obtain evidence of approval per the delegation of authority matrix.",
+    Classification.DATA_QUALITY: "Have a person read the source document and confirm the extracted fields.",
 }
 
 _SEV = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}
@@ -147,6 +164,17 @@ class OpenAICompatibleAnalyst(_JsonAnalyst):  # pragma: no cover - network
         return resp.choices[0].message.content or ""
 
 
+class ChatAnalyst(_JsonAnalyst):
+    """Analyst backed by any `ChatClient` (e.g. a Microsoft Foundry deployment)."""
+
+    def __init__(self, chat) -> None:
+        self._chat = chat
+        self.name = f"analyst:{chat.name}"
+
+    def _call(self, system: str, user: str) -> str:
+        return self._chat.chat(system, user)
+
+
 def build_analyst(kind: str) -> Analyst:
     if kind == "rule":
         return RuleBasedAnalyst()
@@ -154,4 +182,8 @@ def build_analyst(kind: str) -> Analyst:
         return AnthropicAnalyst()
     if kind == "openai":
         return OpenAICompatibleAnalyst()
-    raise ValueError(f"unknown analyst '{kind}' (rule | anthropic | openai)")
+    if kind == "foundry":
+        from .llm import FoundryChat
+
+        return ChatAnalyst(FoundryChat())
+    raise ValueError(f"unknown analyst '{kind}' (rule | foundry | anthropic | openai)")

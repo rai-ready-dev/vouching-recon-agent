@@ -6,6 +6,7 @@ so a record cannot be edited after it enters the evidence layer.
 from __future__ import annotations
 
 from datetime import date
+from datetime import date as Date  # alias: fields named `date` shadow the type inside class bodies
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,6 +70,47 @@ class GLEntry(_Record):
     amount: Decimal  # signed: receipts/debits positive, payments/credits negative
     reference: str = ""
     description: str = ""
+
+
+class SourceFile(_Record):
+    """A supporting document as received (identified by content hash)."""
+
+    filename: str
+    sha256: str
+    kind: str          # pdf | image | xlsx | docx | txt | csv | eml
+    pages: int = 1
+    method: str = "text"  # text | ocr
+
+
+class Transaction(_Record):
+    """A ledger entry being vouched: the claim that needs supporting evidence."""
+
+    type: str = "other"   # purchase | sales | expense | payroll | fixed_asset | bank_payment | other
+    date: date
+    amount: Decimal       # absolute recorded amount
+    currency: str = ""
+    counterparty: str = ""
+    reference: str = ""
+    account: str = ""
+    description: str = ""
+    approver: str = ""
+
+
+class Voucher(_Record):
+    """Structured facts extracted from one supporting document."""
+
+    source_doc: str       # SourceFile id
+    doc_type: str = "unknown"
+    date: Date | None = None
+    amount: Decimal | None = None
+    tax: Decimal | None = None
+    currency: str | None = None
+    parties: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    approvals: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    method: str = "text"
+    notes: list[str] = Field(default_factory=list)  # fields dropped as ungrounded, etc.
 
 
 class BankLine(_Record):

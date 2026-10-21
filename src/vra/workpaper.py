@@ -5,6 +5,7 @@ from .evidence import EvidenceStore
 from .reports import Disposition, RunReport
 
 _TITLE = {"vouching": "Purchase invoice vouching (three-way match)",
+          "document_vouching": "Vouching of ledger entries to supporting documents",
           "bank_rec": "Bank reconciliation (bank statement to general ledger)"}
 _PROCEDURE = {
     "vouching": [
@@ -12,6 +13,14 @@ _PROCEDURE = {
         "Matched each invoice to its purchase order and goods receipts (price, quantity, vendor, item), "
         "tracking cumulative billing against each PO.",
         "Tested the full population for exact, near and split-invoice duplicates.",
+    ],
+    "document_vouching": [
+        "Read every supporting document (PDF, scan, Excel, Word, text, email) and extracted key fields; "
+        "each extracted value was verified to appear in the document.",
+        "Linked each ledger entry to its supporting document by reference, amount, counterparty and date.",
+        "Applied the vouching programme for each transaction type (existence, accuracy, counterparty, "
+        "cut-off, authorisation, reuse of documents).",
+        "Listed documents that matched no ledger entry (possible unrecorded items).",
     ],
     "bank_rec": [
         "Matched bank lines to GL cash entries: exact reference, amount and date window, tolerance, "
@@ -41,6 +50,24 @@ def render_workpaper(report: RunReport, store: EvidenceStore) -> str:
         f"- Escalated: **{counts['escalate']}**",
         "",
     ]
+    if report.period:
+        out[3:3] = [f"- **Audit period:** {report.period}"]
+    if report.programmes:
+        out += ["## Programmes applied", ""]
+        out += [f"- **{k.replace('_', ' ')}:** {', '.join(v)}" for k, v in sorted(report.programmes.items())]
+        out.append("")
+    if report.documents:
+        out += ["## Documents read", "", "| File | Type | Read by | SHA-256 |", "|---|---|---|---|"]
+        out += [f"| {d['file']} | {d['kind']} | {d['method']} | `{d['sha256']}…` |" for d in report.documents]
+        out.append("")
+    if report.intake_issues:
+        out += ["## Documents that could not be fully read (reviewer action required)", ""]
+        out += [f"- {i}" for i in report.intake_issues]
+        out.append("")
+    if report.unlinked_documents:
+        out += ["## Documents not linked to any ledger entry (possible unrecorded items)", ""]
+        out += [f"- {d}" for d in report.unlinked_documents]
+        out.append("")
     if report.proof:
         p = report.proof
         out += ["## Reconciliation proof", "",

@@ -53,6 +53,12 @@ class RunReport(BaseModel):
     cases: list[CaseResult] = Field(default_factory=list)
     aging: dict = Field(default_factory=dict)
     proof: dict | None = None
+    # document vouching
+    period: str = ""
+    programmes: dict[str, list[str]] = Field(default_factory=dict)
+    intake_issues: list[str] = Field(default_factory=list)
+    unlinked_documents: list[str] = Field(default_factory=list)
+    documents: list[dict] = Field(default_factory=list)
 
     def by_disposition(self) -> dict[str, int]:
         counts = {d.value: 0 for d in Disposition}
