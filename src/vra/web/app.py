@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import __version__
-from . import exports
+from . import exports, foundry_settings
 from .auth import Auth, AuthError
 from .config import Settings, foundry_configured
 from .db import Database
@@ -93,6 +93,49 @@ class VoucherOverride(BaseModel):
     note: str = ""
 
 
+class FoundryBody(BaseModel):
+    endpoint: str = ""
+    deployment: str = ""
+    api_key: str = ""
+    api_version: str = ""
+    price_in_per_m: str = ""
+    price_out_per_m: str = ""
+    clear_key: bool = False
+
+
+class SourceSettingsBody(BaseModel):
+    filename: str
+    settings: dict = {}
+
+
+class AliasBody(BaseModel):
+    name_a: str
+    name_b: str
+
+
+class EvaluateBody(BaseModel):
+    answer_key: str
+
+
+def foundry_hint(exc: Exception) -> str:
+    """Turn a raw SDK error into something a person can act on."""
+    name, status, text = type(exc).__name__, getattr(exc, "status_code", None), str(exc)
+    low = text.lower()
+    if status == 401 or "authenticat" in low or "invalid api key" in low or "incorrect api key" in low:
+        return "The key or sign-in was rejected (401). Check the API key, or run `az login` if you are using Microsoft Entra ID."
+    if status == 403 or "permission" in low:
+        return "Access was denied (403). Your key or account lacks permission on this resource (for Entra ID, ask IT for the 'Cognitive Services OpenAI User' role)."
+    if status == 404 or "deploymentnotfound" in low or "does not exist" in low:
+        return "The deployment was not found (404). Check the deployment NAME in Foundry (not the model type) and that the endpoint belongs to the same resource."
+    if status == 429:
+        return "Rate limit or quota exceeded (429). Wait a minute, or raise the deployment's tokens-per-minute quota in Foundry."
+    if name in ("APIConnectionError", "ConnectError", "ConnectTimeout") or "connection" in low or "ssl" in low or "certificate" in low:
+        return "Could not connect. Check the endpoint address, your internet or proxy settings, and that *.openai.azure.com is allowed by your firewall."
+    if status == 400 and "api version" in low:
+        return "The API version is not supported by this resource. Try a different version in the form below."
+    return f"{name}: {text[:300]}"
+
+
 class LinkOverride(BaseModel):
     txn_id: str
     voucher_id: str | None = None
@@ -102,6 +145,7 @@ class LinkOverride(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     settings.ensure_dirs()
+    foundry_settings.load(settings)  # connection details saved from the Settings page
     db = Database(settings.db_path)
     auth = Auth(db, settings)
     svc = Service(db, settings, auth)
@@ -228,16 +272,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/system/test-foundry", **api)
     def test_foundry(_: dict = Depends(admin)):
+        import time
+
         if not foundry_configured():
-            raise ApiError(400, "Foundry is not configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT.")
+            raise ApiError(400, "Foundry is not configured. Enter the endpoint and deployment on this page first.")
         try:
             from ..llm import FoundryChat
 
+            t0 = time.time()
             chat = FoundryChat()
             reply = chat.chat("Reply with the single word OK.", "ping")
-            return {"ok": True, "deployment": chat.name, "reply": reply[:80]}
+            usage = chat.pop_usage()
+            return {"ok": True, "deployment": chat.name, "reply": reply[:80], "seconds": round(time.time() - t0, 2),
+                    "tokens": {"in": usage[0], "out": usage[1]} if usage else None}
         except Exception as e:
-            return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}"}, status_code=200)
+            return JSONResponse({"ok": False, "error": foundry_hint(e), "detail": f"{type(e).__name__}: {str(e)[:300]}"}, status_code=200)
+
+    @app.get("/api/system/foundry")
+    def get_foundry(_: dict = Depends(admin)):
+        return foundry_settings.current()
+
+    @app.post("/api/system/foundry", **api)
+    def save_foundry(body: FoundryBody, user: dict = Depends(admin)):
+        try:
+            foundry_settings.save(settings, body.model_dump(exclude={"clear_key"}), body.clear_key)
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        svc.log(user, "foundry_settings_saved", "deployment=" + (body.deployment or foundry_settings.current()["deployment"]))
+        return foundry_settings.current() | {"configured": foundry_configured()}
+
+    @app.delete("/api/system/foundry", **api)
+    def delete_foundry(user: dict = Depends(admin)):
+        foundry_settings.clear(settings)
+        svc.log(user, "foundry_settings_cleared")
+        return {"configured": foundry_configured()}
 
     @app.get("/api/programmes")
     def programmes(_: dict = Depends(current_user)):
@@ -389,6 +457,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             raise ApiError(404, "Unknown export format.")
         return Response(body, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{stem}.{ext}"'})
+
+    # ---------------------------------------------------------------- performance and quality
+    @app.get("/api/runs/{rid}/performance")
+    def performance(rid: int, _: dict = Depends(current_user)):
+        return svc.run_performance(rid)
+
+    @app.post("/api/runs/{rid}/evaluate", **api)
+    def evaluate(rid: int, body: EvaluateBody, _: dict = Depends(current_user)):
+        return svc.evaluate_run(rid, body.answer_key)
+
+    @app.get("/api/engagements/{eid}/quality")
+    def quality(eid: int, _: dict = Depends(current_user)):
+        svc.engagement(eid)
+        return svc.engagement_quality(eid)
+
+    # ---------------------------------------------------------------- source of truth setup, aliases
+    @app.get("/api/engagements/{eid}/source-preview")
+    def source_preview(eid: int, file_id: int, _: dict = Depends(current_user)):
+        return svc.source_preview(eid, file_id)
+
+    @app.get("/api/engagements/{eid}/source-settings")
+    def get_source_settings(eid: int, _: dict = Depends(current_user)):
+        return svc.source_settings(eid)
+
+    @app.put("/api/engagements/{eid}/source-settings", **api)
+    def put_source_settings(eid: int, body: SourceSettingsBody, user: dict = Depends(current_user)):
+        svc.set_source_settings(user, eid, body.filename, body.settings)
+        return {"ok": True}
+
+    @app.get("/api/engagements/{eid}/aliases")
+    def get_aliases(eid: int, _: dict = Depends(current_user)):
+        svc.engagement(eid)
+        return svc.list_aliases(eid)
+
+    @app.post("/api/engagements/{eid}/aliases", **api)
+    def post_alias(eid: int, body: AliasBody, user: dict = Depends(current_user)):
+        svc.add_alias(user, eid, body.name_a, body.name_b)
+        return {"ok": True}
+
+    @app.delete("/api/engagements/{eid}/aliases", **api)
+    def delete_alias(eid: int, alias: str, user: dict = Depends(current_user)):
+        svc.remove_alias(user, eid, alias)
+        return {"ok": True}
 
     # ---------------------------------------------------------------- corrections
     @app.get("/api/engagements/{eid}/overrides")

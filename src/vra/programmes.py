@@ -17,7 +17,8 @@ from .linking import Link
 from .money import q2
 from .policy import Policy
 from .records import Transaction, Voucher
-from .textutil import normalize_name, normalize_number, similarity
+from .records import SourceFile
+from .textutil import canon_name, normalize_name, normalize_number, similarity
 
 
 @dataclass
@@ -25,6 +26,8 @@ class Ctx:
     policy: Policy
     period: tuple | None = None                    # (start, end) of the audit period
     usage: dict[str, list[Transaction]] = field(default_factory=dict)  # voucher id -> ledger entries using it
+    sources: dict[str, SourceFile] = field(default_factory=dict)
+    aliases: dict[str, str] = field(default_factory=dict)  # reviewer-approved name aliases
 
 
 def _f(code, sev, t: Transaction, v: Voucher | None, msg: str, risk=Decimal(0), numbers=(), extra=()) -> Finding:
@@ -60,7 +63,8 @@ def counterparty_agrees(t, v, link, ctx):
     if not v.parties:
         return [_f(FindingCode.FIELD_MISSING, Severity.MEDIUM, t, v,
                    "No counterparty name could be read from the supporting document.")]
-    best = max(similarity(normalize_name(t.counterparty), normalize_name(p)) for p in v.parties)
+    want = canon_name(t.counterparty, ctx.aliases)
+    best = max(similarity(want, canon_name(p, ctx.aliases)) for p in v.parties)
     if best >= ctx.policy.vendor_threshold:
         return []
     return [_f(FindingCode.COUNTERPARTY_MISMATCH, Severity.HIGH, t, v,
@@ -69,7 +73,7 @@ def counterparty_agrees(t, v, link, ctx):
 
 
 def reference_agrees(t, v, link, ctx):
-    if not t.reference:
+    if not t.reference or v.method == "combined":  # a payment covering several invoices has its own reference
         return []
     if not v.references:
         return [_f(FindingCode.FIELD_MISSING, Severity.LOW, t, v,
@@ -113,6 +117,8 @@ def voucher_not_reused(t, v, link, ctx):
     users = sorted(ctx.usage.get(v.id, []), key=lambda x: (x.date, x.id))
     if len(users) > 1 and users[0].id != t.id:
         first = users[0]
+        if v.amount is not None and sum((u.amount for u in users), Decimal(0)) <= v.amount + ctx.policy.abs_tolerance:
+            return []  # e.g. a statement or remittance that covers several entries whose total it equals
         return [_f(FindingCode.VOUCHER_REUSED, Severity.HIGH, t, v,
                    f"The same document ({v.source_doc}) already supports ledger entry {first.id} "
                    f"({q2(first.amount):,.2f}); this entry is {q2(t.amount):,.2f}.", t.amount,
@@ -137,15 +143,57 @@ def extraction_quality(t, v, link, ctx):
     return []
 
 
+def doc_arithmetic(t, v, link, ctx):
+    if v.subtotal is None or v.tax is None or v.amount is None:
+        return []
+    expected = v.subtotal + v.tax
+    diff = abs(expected - v.amount)
+    if diff <= max(ctx.policy.rounding_tolerance, Decimal("0.01")):
+        return []
+    return [_f(FindingCode.DOC_ARITHMETIC, severity_for(diff, ctx.policy), t, v,
+               f"On the document, subtotal {q2(v.subtotal):,.2f} plus tax {q2(v.tax):,.2f} is {q2(expected):,.2f}, but the "
+               f"stated total is {q2(v.amount):,.2f} (difference {q2(diff):,.2f}).", diff,
+               (num(v, "subtotal"), num(v, "tax"), num(v, "amount")))]
+
+
+def document_integrity(t, v, link, ctx):
+    src = ctx.sources.get(v.source_doc)
+    if not src or not src.flags:
+        return []
+    return [_f(FindingCode.DOC_TAMPER_SUSPECTED, Severity.MEDIUM, t, v,
+               f"Possible alteration of {src.filename}: {'; '.join(src.flags)}. This can be innocent (a re-saved or signed "
+               f"copy) but the original should be obtained.", extra=(src.evidence_id,))]
+
+
+def risk_signals(t, v, link, ctx):
+    """Optional low-severity analytics. They carry no amount at risk, so alone they never need a decision."""
+    if not ctx.policy.risk_signals:
+        return []
+    out = []
+    limit = ctx.policy.approval_limit
+    if limit * Decimal("0.9") <= t.amount < limit:
+        out.append(_f(FindingCode.JUST_BELOW_LIMIT, Severity.LOW, t, v,
+                      f"Amount {q2(t.amount):,.2f} is just below the approval limit of {q2(limit):,.2f}.", numbers=(num(t, "amount"),)))
+    if t.date.weekday() >= 5:
+        out.append(_f(FindingCode.WEEKEND_POSTING, Severity.LOW, t, v,
+                      f"Posted on a {t.date.strftime('%A')} ({t.date})."))
+    if t.amount >= 5000 and t.amount % 1000 == 0:
+        out.append(_f(FindingCode.ROUND_AMOUNT, Severity.LOW, t, v,
+                      f"Amount {q2(t.amount):,.2f} is a round thousand.", numbers=(num(t, "amount"),)))
+    return out
+
+
 TESTS: dict[str, Callable] = {
     "doc_type": doc_type, "amount_agrees": amount_agrees, "counterparty_agrees": counterparty_agrees,
     "reference_agrees": reference_agrees, "currency_agrees": currency_agrees, "date_ok": date_ok,
     "voucher_not_reused": voucher_not_reused, "approval_present": approval_present,
-    "extraction_quality": extraction_quality,
+    "extraction_quality": extraction_quality, "doc_arithmetic": doc_arithmetic,
+    "document_integrity": document_integrity, "risk_signals": risk_signals,
 }
 
 _COMMON = [{"test": "amount_agrees"}, {"test": "counterparty_agrees"}, {"test": "currency_agrees"},
-           {"test": "voucher_not_reused"}, {"test": "extraction_quality"}]
+           {"test": "voucher_not_reused"}, {"test": "extraction_quality"}, {"test": "doc_arithmetic"},
+           {"test": "document_integrity"}, {"test": "risk_signals"}]
 
 PROGRAMMES: dict[str, list[dict]] = {
     "purchase": [{"test": "doc_type", "allowed": ["invoice", "receipt", "credit_note"]},
@@ -201,6 +249,11 @@ def run_programme(t: Transaction, v: Voucher | None, link: Link, steps: list[dic
                    f"{q2(t.amount):,.2f}.{hint}{sources_note}", t.amount, (num(t, "amount"),),
                    extra=((f"Voucher:{link.closest_id}",) if link.closest_id else ()))]
     out: list[Finding] = []
+    if "ai-suggested" in link.reasons:
+        out.append(_f(FindingCode.AI_SUGGESTED_LINK, Severity.MEDIUM, t, v,
+                      f"The rules found no matching document; the AI suggested {v.source_doc}"
+                      + (f" ({link.note})" if link.note else "") + ". Confirm that it really supports this entry.",
+                      t.amount, (num(t, "amount"),)))
     for step in steps:
         params = {k: val for k, val in step.items() if k != "test"}
         out.extend(TESTS[step["test"]](t, v, link, ctx, **params))

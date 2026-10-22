@@ -24,8 +24,8 @@ def parse_env(text: str) -> dict[str, str]:
     return out
 
 
-def load_env_file(path: str | Path = ".env") -> list[str]:
-    """Load KEY=VALUE pairs into os.environ without overriding variables already set.
+def load_env_file(path: str | Path = ".env", override: bool = False) -> list[str]:
+    """Load KEY=VALUE pairs into os.environ (without overriding variables already set, unless override=True).
 
     Returns the names of the variables that were loaded (never their values).
     """
@@ -38,7 +38,7 @@ def load_env_file(path: str | Path = ".env") -> list[str]:
         return []
     loaded = []
     for key, val in parse_env(text).items():
-        if val != "" and key not in os.environ:
+        if val != "" and (override or key not in os.environ):
             os.environ[key] = val
             loaded.append(key)
     return loaded

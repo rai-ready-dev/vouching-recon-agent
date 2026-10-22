@@ -52,6 +52,12 @@ _CLASS = {
     FindingCode.MISSING_APPROVAL: Classification.AUTHORISATION,
     FindingCode.LOW_CONFIDENCE_EXTRACTION: Classification.DATA_QUALITY,
     FindingCode.FIELD_MISSING: Classification.DATA_QUALITY,
+    FindingCode.DOC_ARITHMETIC: Classification.ARITHMETIC,
+    FindingCode.DOC_TAMPER_SUSPECTED: Classification.DOCUMENT_INTEGRITY,
+    FindingCode.AI_SUGGESTED_LINK: Classification.LINK_UNCERTAIN,
+    FindingCode.JUST_BELOW_LIMIT: Classification.RISK_SIGNAL,
+    FindingCode.WEEKEND_POSTING: Classification.RISK_SIGNAL,
+    FindingCode.ROUND_AMOUNT: Classification.RISK_SIGNAL,
 }
 
 _ACTION = {
@@ -70,6 +76,9 @@ _ACTION = {
     Classification.TIMING: "Check the document date against the posting date and payment terms.",
     Classification.AUTHORISATION: "Obtain evidence of approval per the delegation of authority matrix.",
     Classification.DATA_QUALITY: "Have a person read the source document and confirm the extracted fields.",
+    Classification.DOCUMENT_INTEGRITY: "Obtain the original document from the vendor or system and compare it with the copy provided.",
+    Classification.LINK_UNCERTAIN: "Confirm the suggested document really supports this entry, or link the right one.",
+    Classification.RISK_SIGNAL: "Informational risk signal; consider in the context of the whole population.",
 }
 
 _SEV = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}
@@ -172,7 +181,7 @@ class ChatAnalyst(_JsonAnalyst):
         self.name = f"analyst:{chat.name}"
 
     def _call(self, system: str, user: str) -> str:
-        return self._chat.chat(system, user)
+        return self._chat.chat(system, user, json_mode=True)
 
 
 def build_analyst(kind: str) -> Analyst:

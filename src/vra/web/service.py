@@ -24,7 +24,8 @@ class ApiError(Exception):
         self.status, self.message = status, message
 
 
-LEDGER_EXT = {".xlsx", ".xlsm", ".csv", ".tsv"}
+LEDGER_EXT = {".xlsx", ".xlsm", ".csv", ".tsv"}   # spreadsheets: columns are mapped
+SOURCE_EXT = LEDGER_EXT | {".pdf", ".docx", ".txt", ".eml", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 DECISION_ACTIONS = {"resolved", "confirmed", "followup", "reopen", "comment"}
 STATUS_ACTIONS = ("resolved", "confirmed", "followup")
 SEV_RANK = "CASE i.severity WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END"
@@ -208,8 +209,9 @@ class Service:
         ext = Path(rel).suffix.lower()
         limit = self.settings.max_upload_mb * 1024 * 1024
         if kind == "ledger":
-            if ext not in LEDGER_EXT:
-                raise ApiError(400, f"The ledger must be an Excel or CSV file ({', '.join(sorted(LEDGER_EXT))}).")
+            if ext not in SOURCE_EXT:
+                raise ApiError(400, "The source of truth must be an Excel/CSV file, or a document (PDF, Word, text, email, "
+                                    f"scan). Got '{ext or rel}'.")
             rel = Path(rel).name
         elif ext == ".zip":
             return self._add_zip(user, eid, src, limit)
@@ -222,8 +224,6 @@ class Service:
 
     def _register_file(self, user: dict, eid: int, kind: str, rel: str, sha: str, size: int) -> None:
         with self.db.tx() as c:
-            if kind == "ledger":  # exactly one active ledger
-                c.execute("UPDATE files SET active=0 WHERE engagement_id=? AND kind='ledger' AND filename<>?", (eid, rel))
             c.execute("INSERT INTO files(engagement_id, kind, filename, sha256, size, uploaded_by, uploaded_at)"
                       " VALUES(?,?,?,?,?,?,?) ON CONFLICT(engagement_id, kind, filename) DO UPDATE SET"
                       " sha256=excluded.sha256, size=excluded.size, uploaded_by=excluded.uploaded_by,"
@@ -280,14 +280,29 @@ class Service:
     def normalize_options(self, raw: dict) -> dict:
         o = {"extractor": raw.get("extractor", "heuristic"), "analyst": raw.get("analyst", "rule"),
              "ocr": raw.get("ocr", "none"), "dayfirst": bool(raw.get("dayfirst", True)), "policy": {},
-             "programmes_json": (raw.get("programmes_json") or "").strip()}
+             "programmes_json": (raw.get("programmes_json") or "").strip(),
+             "risk_signals": bool(raw.get("risk_signals", False)), "benchmark": bool(raw.get("benchmark", False)),
+             "ai_linking": bool(raw.get("ai_linking", False)), "sample_interval": None, "sample_seed": 1}
         for key, allowed in (("extractor", ("heuristic", "foundry")), ("analyst", ("rule", "foundry")),
                              ("ocr", ("none", "foundry"))):
             if o[key] not in allowed:
                 raise ApiError(400, f"{key} must be one of {', '.join(allowed)}.")
-        if "foundry" in (o["extractor"], o["analyst"], o["ocr"]) and not foundry_configured():
+        wants_ai = "foundry" in (o["extractor"], o["analyst"], o["ocr"]) or o["benchmark"] or o["ai_linking"]
+        if wants_ai and not foundry_configured():
             raise ApiError(400, "Microsoft Foundry is not configured on the server. Set AZURE_OPENAI_ENDPOINT and "
                                 "AZURE_OPENAI_DEPLOYMENT (see Settings), or choose the offline options.")
+        si = raw.get("sample_interval")
+        if si not in (None, ""):
+            try:
+                if float(si) <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ApiError(400, "The sampling interval must be a positive number.")
+            o["sample_interval"] = str(si)
+        try:
+            o["sample_seed"] = int(raw.get("sample_seed") or 1)
+        except (TypeError, ValueError):
+            raise ApiError(400, "The sampling seed must be a whole number.")
         for k, v in (raw.get("policy") or {}).items():
             if k not in POLICY_KEYS:
                 raise ApiError(400, f"Unknown policy setting '{k}'.")
@@ -323,7 +338,7 @@ class Service:
         opts = self.normalize_options(raw_options)
         files = self.db.query("SELECT kind, filename, sha256 FROM files WHERE engagement_id=? AND active=1", (eid,))
         if not any(f["kind"] == "ledger" for f in files):
-            raise ApiError(400, "Upload the ledger (Excel or CSV) first.")
+            raise ApiError(400, "Upload the source of truth (the ledger or listing to vouch) first.")
         if not any(f["kind"] == "document" for f in files):
             raise ApiError(400, "Upload the supporting documents first.")
         if self.db.one("SELECT 1 FROM runs WHERE engagement_id=? AND status IN ('queued','running')", (eid,)):
@@ -472,7 +487,7 @@ class Service:
             raise ApiError(404, "No document data for this run.")
         return json.loads(path.read_text())
 
-    EDITABLE = {"doc_type", "date", "amount", "tax", "currency", "parties", "references", "approvals"}
+    EDITABLE = {"doc_type", "date", "amount", "subtotal", "tax", "currency", "parties", "references", "approvals"}
 
     def set_voucher_override(self, user: dict, eid: int, voucher_id: str, fields: dict, note: str) -> None:
         self.engagement(eid)
@@ -484,7 +499,7 @@ class Service:
                 v = [str(x).strip() for x in (v if isinstance(v, list) else str(v).split(";")) if str(x).strip()]
             elif k == "date":
                 v = self._check_date(v, "Date")
-            elif k in ("amount", "tax"):
+            elif k in ("amount", "subtotal", "tax"):
                 if v in (None, ""):
                     v = None
                 else:
@@ -536,6 +551,165 @@ class Service:
         return [dict(r) for r in self.db.query(
             "SELECT a.ts, a.action, a.detail, a.run_id, u.display_name AS user FROM activity a"
             " LEFT JOIN users u ON u.id=a.user_id WHERE a.engagement_id=? ORDER BY a.id DESC LIMIT ?", (eid, limit))]
+
+    # ------------------------------------------------------------------ source of truth setup
+    def _file(self, eid: int, fid: int) -> dict:
+        row = self.db.one("SELECT * FROM files WHERE id=? AND engagement_id=? AND active=1", (fid, eid))
+        if not row:
+            raise ApiError(404, "File not found.")
+        return dict(row)
+
+    def source_preview(self, eid: int, fid: int) -> dict:
+        from ..ledger import LedgerError, preview_source
+
+        f = self._file(eid, fid)
+        ext = Path(f["filename"]).suffix.lower()
+        saved = self.source_settings(eid).get(f["filename"], {})
+        if ext not in LEDGER_EXT:
+            return {"kind": "document", "filename": f["filename"], "settings": saved,
+                    "note": "Entries will be read from the text of this document (a date, some text and an amount on each line, "
+                            "or with the AI reader for harder layouts). There are no columns to map."}
+        blob = self.blob_path(eid, f["sha256"])
+        tmp = self.settings.data_dir / f".preview-{os.getpid()}-{fid}{ext}"
+        try:
+            tmp.write_bytes(blob.read_bytes())
+            return {"kind": "spreadsheet", "filename": f["filename"], "settings": saved, **preview_source(tmp)}
+        except LedgerError as e:
+            raise ApiError(400, str(e))
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def source_settings(self, eid: int) -> dict:
+        return {r["filename"]: json.loads(r["settings_json"]) for r in
+                self.db.query("SELECT filename, settings_json FROM source_settings WHERE engagement_id=?", (eid,))}
+
+    def set_source_settings(self, user: dict, eid: int, filename: str, settings: dict) -> None:
+        from ..ledger import FIELDS
+
+        self.engagement(eid)
+        if not self.db.one("SELECT 1 FROM files WHERE engagement_id=? AND kind='ledger' AND filename=? AND active=1", (eid, filename)):
+            raise ApiError(404, "That source file is not part of this engagement.")
+        clean: dict = {}
+        mapping = {k: str(v).strip() for k, v in (settings.get("mapping") or {}).items() if str(v or "").strip()}
+        bad = [k for k in mapping if k not in FIELDS]
+        if bad:
+            raise ApiError(400, f"Unknown field(s): {', '.join(bad)}")
+        if mapping:
+            if "date" not in mapping or not ("amount" in mapping or "debit" in mapping or "credit" in mapping):
+                raise ApiError(400, "Choose at least a Date column and an Amount (or Debit/Credit) column.")
+            clean["mapping"] = mapping
+        if settings.get("sheet"):
+            clean["sheet"] = str(settings["sheet"])
+        if settings.get("header_row"):
+            try:
+                clean["header_row"] = max(1, int(settings["header_row"]))
+            except (TypeError, ValueError):
+                raise ApiError(400, "The header row must be a whole number.")
+        if settings.get("default_type"):
+            clean["default_type"] = str(settings["default_type"]).strip().lower()
+        with self.db.tx() as c:
+            if clean:
+                c.execute("INSERT INTO source_settings(engagement_id, filename, settings_json, user_id, created_at) VALUES(?,?,?,?,?)"
+                          " ON CONFLICT(engagement_id, filename) DO UPDATE SET settings_json=excluded.settings_json,"
+                          " user_id=excluded.user_id, created_at=excluded.created_at",
+                          (eid, filename, json.dumps(clean), user["id"], now()))
+            else:
+                c.execute("DELETE FROM source_settings WHERE engagement_id=? AND filename=?", (eid, filename))
+        self.log(user, "source_mapping_saved", filename, eid)
+
+    # ------------------------------------------------------------------ vendor aliases (learned from reviewers)
+    def alias_map(self, eid: int) -> dict[str, str]:
+        return {r["alias"]: r["canonical"] for r in self.db.query("SELECT alias, canonical FROM aliases WHERE engagement_id=?", (eid,))}
+
+    def list_aliases(self, eid: int) -> list[dict]:
+        return [dict(r) for r in self.db.query(
+            "SELECT a.alias, a.canonical, a.created_at, u.display_name AS user FROM aliases a LEFT JOIN users u ON u.id=a.user_id"
+            " WHERE a.engagement_id=? ORDER BY a.alias", (eid,))]
+
+    def add_alias(self, user: dict, eid: int, name_a: str, name_b: str) -> None:
+        from ..textutil import normalize_name
+
+        self.engagement(eid)
+        a, b = normalize_name(name_a), normalize_name(name_b)
+        if not a or not b:
+            raise ApiError(400, "Both names are required.")
+        if a == b:
+            raise ApiError(400, "Those names are already treated as the same.")
+        with self.db.tx() as c:  # b (the ledger's name) is the canonical one; a maps onto it
+            c.execute("INSERT INTO aliases(engagement_id, alias, canonical, user_id, created_at) VALUES(?,?,?,?,?)"
+                      " ON CONFLICT(engagement_id, alias) DO UPDATE SET canonical=excluded.canonical,"
+                      " user_id=excluded.user_id, created_at=excluded.created_at", (eid, a, b, user["id"], now()))
+        self.log(user, "alias_added", f"{name_a} = {name_b}", eid)
+
+    def remove_alias(self, user: dict, eid: int, alias: str) -> None:
+        with self.db.tx() as c:
+            c.execute("DELETE FROM aliases WHERE engagement_id=? AND alias=?", (eid, alias))
+        self.log(user, "alias_removed", alias, eid)
+
+    # ------------------------------------------------------------------ performance and quality
+    def run_performance(self, rid: int) -> dict:
+        run = self.run_public(rid)
+        if run["status"] != "completed":
+            raise ApiError(409, "The run has not completed.")
+        wd = self.settings.runs_dir / str(rid)
+        perf = json.loads((wd / "perf.json").read_text()) if (wd / "perf.json").is_file() else {}
+        bench = json.loads((wd / "benchmark.json").read_text()) if (wd / "benchmark.json").is_file() else None
+        report = json.loads((wd / "report.json").read_text()) if (wd / "report.json").is_file() else {}
+        return {"run": {"id": rid, "started_at": run["started_at"], "options": run["options"]}, "perf": perf,
+                "benchmark": bench, "review": self.review_metrics(rid), "insights": report.get("insights", {}),
+                "sampling": report.get("sampling", {}), "linking": report.get("linking", {})}
+
+    def review_metrics(self, rid: int) -> dict:
+        """How the agent's flags held up against what reviewers decided: the real-world precision measure."""
+        rows = self.db.query(
+            f"SELECT i.txn_id, i.disposition, i.codes, {self._STATUS_SQL} AS last_action FROM items i WHERE i.run_id=?", (rid,))
+        by_code: dict[str, dict] = {}
+        tot = {"flagged": 0, "confirmed": 0, "resolved": 0, "followup": 0, "pending": 0}
+        for r in rows:
+            codes = [c for c in r["codes"].split(",") if c]
+            if not codes:
+                continue
+            st = self.review_status(r["last_action"])
+            tot["flagged"] += 1
+            tot[st] += 1
+            for c in codes:
+                d = by_code.setdefault(c, {"flagged": 0, "confirmed": 0, "resolved": 0, "followup": 0, "pending": 0})
+                d["flagged"] += 1
+                d[st] += 1
+        for d in list(by_code.values()) + [tot]:
+            decided = d["confirmed"] + d["resolved"]
+            d["precision"] = round(d["confirmed"] / decided, 3) if decided else None  # confirmed / (confirmed + dismissed)
+        run = self.run_row(rid)
+        n_docs = (json.loads(run["summary_json"]) or {}).get("vouchers", 0) if run.get("summary_json") else 0
+        ov = self.overrides(run["engagement_id"])
+        return {"totals": tot, "by_finding": dict(sorted(by_code.items())),
+                "corrections": {"extraction_corrections": len(ov["vouchers"]), "documents": n_docs,
+                                "correction_rate": round(len(ov["vouchers"]) / n_docs, 3) if n_docs else None,
+                                "manual_links": len(ov["links"]), "aliases_learned": len(self.alias_map(run["engagement_id"]))}}
+
+    def evaluate_run(self, rid: int, key_text: str) -> dict:
+        from ..evaluation import evaluate_items, parse_answer_key
+
+        run = self.run_row(rid)
+        if run["status"] != "completed":
+            raise ApiError(409, "The run has not completed.")
+        key = parse_answer_key(key_text)
+        if not key:
+            raise ApiError(400, "The answer key is empty. Use lines like: R12,AMOUNT_MISMATCH  or  R13,CLEAN")
+        predicted = {r["txn_id"]: {c for c in r["codes"].split(",") if c}
+                     for r in self.db.query("SELECT txn_id, codes FROM items WHERE run_id=?", (rid,))}
+        return evaluate_items(key, predicted)
+
+    def engagement_quality(self, eid: int) -> list[dict]:
+        out = []
+        for r in self.db.query("SELECT id FROM runs WHERE engagement_id=? AND status='completed' ORDER BY id", (eid,)):
+            run = self.run_public(r["id"])
+            m = self.review_metrics(r["id"])["totals"]
+            s = run["summary"] or {}
+            out.append({"run": run["id"], "started_at": run["started_at"], "exceptions": s.get("exceptions"), "seconds": s.get("seconds"),
+                        "tokens": s.get("tokens"), "llm_calls": s.get("llm_calls"), "extractor": s.get("extractor"),
+                        "confirmed": m["confirmed"], "resolved": m["resolved"], "pending": m["pending"], "precision": m["precision"]})
+        return out
 
     def programmes(self) -> dict:
         return {"programmes": PROGRAMMES, "tests": sorted(TESTS), "type_aliases": TYPE_ALIASES}

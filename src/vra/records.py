@@ -80,6 +80,7 @@ class SourceFile(_Record):
     kind: str          # pdf | image | xlsx | docx | txt | csv | eml
     pages: int = 1
     method: str = "text"  # text | ocr
+    flags: list[str] = Field(default_factory=list)  # integrity observations (edited PDF, etc.)
 
 
 class Transaction(_Record):
@@ -94,6 +95,7 @@ class Transaction(_Record):
     account: str = ""
     description: str = ""
     approver: str = ""
+    source: str = ""      # which source-of-truth file this entry came from
 
 
 class Voucher(_Record):
@@ -103,6 +105,7 @@ class Voucher(_Record):
     doc_type: str = "unknown"
     date: Date | None = None
     amount: Decimal | None = None
+    subtotal: Decimal | None = None   # amount before tax, when the document shows it
     tax: Decimal | None = None
     currency: str | None = None
     parties: list[str] = Field(default_factory=list)

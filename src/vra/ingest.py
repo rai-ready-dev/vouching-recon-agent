@@ -39,12 +39,55 @@ class SourceDocument:
     needs_ocr: bool = False
     raw: bytes | None = None
     warnings: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)  # integrity observations (edited PDF, changed author...)
 
 
 class OcrEngine(Protocol):
     name: str
 
     def ocr(self, doc: SourceDocument) -> str: ...
+
+
+EDITOR_TOOLS = ("photoshop", "illustrator", "gimp", "nitro", "foxit phantom", "phantompdf", "sejda", "ilovepdf",
+                "smallpdf", "pdfescape", "pdf-xchange editor", "canva", "pdf editor", "pdffiller", "docfly", "lightpdf")
+EDIT_GAP_DAYS = 1
+
+
+def _days(a, b) -> int | None:
+    try:
+        return abs((b.replace(tzinfo=None) - a.replace(tzinfo=None)).days)
+    except Exception:
+        return None
+
+
+def _flags_from_dates(kind: str, created, modified) -> list[str]:
+    gap = _days(created, modified) if created and modified else None
+    if gap is not None and gap > EDIT_GAP_DAYS and modified.replace(tzinfo=None) > created.replace(tzinfo=None):
+        return [f"{kind} was modified {gap} days after it was created ({created:%Y-%m-%d} to {modified:%Y-%m-%d})"]
+    return []
+
+
+def _pdf_flags(reader) -> list[str]:
+    flags: list[str] = []
+    try:
+        md = reader.metadata
+        if not md:
+            return flags
+        flags += _flags_from_dates("PDF", md.creation_date, md.modification_date)
+        for label, val in (("producer", md.producer), ("creator", md.creator)):
+            if val and any(t in str(val).lower() for t in EDITOR_TOOLS):
+                flags.append(f"PDF {label} is an editing tool ('{val}')")
+                break
+    except Exception:  # malformed metadata is common and not itself suspicious
+        pass
+    return flags
+
+
+def _office_flags(kind: str, created, modified, author, last_by) -> list[str]:
+    flags = _flags_from_dates(kind, created, modified)
+    if author and last_by and str(author).strip().lower() != str(last_by).strip().lower():
+        flags.append(f"{kind} author is '{author}' but it was last saved by '{last_by}'")
+    return flags
 
 
 def _decode(raw: bytes) -> str:
@@ -73,7 +116,7 @@ def _cell(v) -> str:
     return str(v).strip()
 
 
-def _xlsx_text(raw: bytes) -> tuple[str, int]:
+def _xlsx_text(raw: bytes) -> tuple[str, int, list[str]]:
     import openpyxl
 
     try:
@@ -90,10 +133,12 @@ def _xlsx_text(raw: bytes) -> tuple[str, int]:
             cells = [_cell(c) for c in row]
             if any(cells):
                 out.append("\t".join(cells).rstrip())
-    return "\n".join(out), len(wb.worksheets)
+    p = wb.properties
+    flags = _office_flags("Workbook", p.created, p.modified, p.creator, p.lastModifiedBy) if p else []
+    return "\n".join(out), len(wb.worksheets), flags
 
 
-def _docx_text(raw: bytes) -> str:
+def _docx_text(raw: bytes) -> tuple[str, list[str]]:
     import docx
     from docx.table import Table
     from docx.text.paragraph import Paragraph
@@ -110,10 +155,12 @@ def _docx_text(raw: bytes) -> str:
         elif tag == "tbl":
             for row in Table(child, d).rows:
                 lines.append("\t".join(c.text.strip() for c in row.cells))
-    return "\n".join(lines)
+    cp = d.core_properties
+    flags = _office_flags("Word file", cp.created, cp.modified, cp.author, cp.last_modified_by)
+    return "\n".join(lines), flags
 
 
-def _pdf_text(raw: bytes) -> tuple[list[str], list[str]]:
+def _pdf_text(raw: bytes) -> tuple[list[str], list[str], list[str]]:
     from pypdf import PdfReader
 
     warnings: list[str] = []
@@ -126,7 +173,7 @@ def _pdf_text(raw: bytes) -> tuple[list[str], list[str]]:
         raise
     except Exception as exc:
         raise IngestError(f"cannot read PDF ({type(exc).__name__}: {exc})") from exc
-    return pages, warnings
+    return pages, warnings, _pdf_flags(reader)
 
 
 def _eml_text(raw: bytes) -> tuple[str, list[str]]:
@@ -158,14 +205,14 @@ def ingest_path(path: str | Path, root: str | Path | None = None) -> SourceDocum
     if ext in TEXT_EXT:
         doc.text = _decode(raw)
     elif ext in (".xlsx", ".xlsm"):
-        doc.text, doc.pages = _xlsx_text(raw)
+        doc.text, doc.pages, doc.flags = _xlsx_text(raw)
         doc.kind = "xlsx"
     elif ext == ".docx":
-        doc.text = _docx_text(raw)
+        doc.text, doc.flags = _docx_text(raw)
     elif ext == ".eml":
         doc.text, doc.warnings = _eml_text(raw)
     elif ext == ".pdf":
-        pages, doc.warnings = _pdf_text(raw)
+        pages, doc.warnings, doc.flags = _pdf_text(raw)
         doc.pages = max(1, len(pages))
         doc.text = "\n".join(pages)
         thin = [i + 1 for i, t in enumerate(pages) if len(t.strip()) < MIN_CHARS_PER_PAGE]

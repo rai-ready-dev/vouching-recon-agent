@@ -59,6 +59,9 @@ class RunReport(BaseModel):
     intake_issues: list[str] = Field(default_factory=list)
     unlinked_documents: list[str] = Field(default_factory=list)
     documents: list[dict] = Field(default_factory=list)
+    insights: dict = Field(default_factory=dict)
+    linking: dict = Field(default_factory=dict)
+    sampling: dict = Field(default_factory=dict)
 
     def by_disposition(self) -> dict[str, int]:
         counts = {d.value: 0 for d in Disposition}

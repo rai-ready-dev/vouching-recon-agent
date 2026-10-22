@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS voucher_overrides(
 CREATE TABLE IF NOT EXISTS link_overrides(
   engagement_id INTEGER NOT NULL REFERENCES engagements(id), txn_id TEXT NOT NULL, voucher_id TEXT,
   user_id INTEGER, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(engagement_id, txn_id));
+CREATE TABLE IF NOT EXISTS source_settings(
+  engagement_id INTEGER NOT NULL REFERENCES engagements(id), filename TEXT NOT NULL, settings_json TEXT NOT NULL,
+  user_id INTEGER, created_at TEXT NOT NULL, PRIMARY KEY(engagement_id, filename));
+CREATE TABLE IF NOT EXISTS aliases(
+  engagement_id INTEGER NOT NULL REFERENCES engagements(id), alias TEXT NOT NULL, canonical TEXT NOT NULL,
+  user_id INTEGER, created_at TEXT NOT NULL, PRIMARY KEY(engagement_id, alias));
 CREATE TABLE IF NOT EXISTS activity(
   id INTEGER PRIMARY KEY, ts TEXT NOT NULL, user_id INTEGER, engagement_id INTEGER, run_id INTEGER,
   action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '');

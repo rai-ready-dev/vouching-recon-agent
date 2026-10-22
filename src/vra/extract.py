@@ -103,6 +103,7 @@ _AMOUNT_LABELS = [
     (3, re.compile(r"(?<!sub)(?<!sub-)(?<!sub )\btotal\b", re.I)),
     (1, re.compile(r"\bamount\b", re.I)),
 ]
+_SUBTOTAL = re.compile(r"sub\s*-?\s*total|net\s+amount|amount\s+before\s+(?:vat|tax|gst)|total\s+before\s+(?:vat|tax|gst)", re.I)
 _TAXWORDS = re.compile(r"\b(vat|tax|gst|discount)\b", re.I)
 _TAX_LINE = re.compile(r"\b(?:vat|gst|sales\s+tax|tax)\b[^\n]{0,40}?(-?\d[\d,]*\.\d{2})(?!\s*%)", re.I)
 _PARTY_LINE = re.compile(
@@ -159,6 +160,11 @@ class HeuristicExtractor:
                     best, amount = (prio, i), abs(nums[-1])
                 break
 
+        subtotal = None
+        for line in lines:
+            m = _SUBTOTAL.search(line)
+            if m and (nums := money_in(line[m.end():])):
+                subtotal = abs(nums[-1])
         tax = None
         m = _TAX_LINE.search(text)
         if m:
@@ -214,7 +220,7 @@ class HeuristicExtractor:
             0.1 if refs else 0) + (0.1 if parties else 0) + (0.05 if doc_type != "unknown" else 0)
         notes = [] if amount is not None else ["no total amount found"]
         return [Voucher(id=f"{doc.id}#1", source_doc=doc.id, doc_type=doc_type, date=dt, amount=amount,
-                        tax=tax, currency=currency, parties=parties, references=refs, approvals=approvals,
+                        subtotal=subtotal, tax=tax, currency=currency, parties=parties, references=refs, approvals=approvals,
                         confidence=round(min(score, 1.0), 2), method=doc.method, notes=notes)]
 
 
@@ -227,6 +233,7 @@ Return ONE JSON object and nothing else:
   "doc_type": one of {list(DOC_TYPES)},
   "date":      {{"value": "YYYY-MM-DD", "quote": "<exact text copied from the document>"}} or null,
   "amount":    {{"value": "1234.50", "quote": "<exact text>"}} or null,   // the document's final total
+  "subtotal":  {{"value": "1190.48", "quote": "<exact text>"}} or null,   // amount before tax, if shown
   "tax":       {{"value": "59.52", "quote": "<exact text>"}} or null,
   "currency":  {{"value": "USD", "quote": "<exact text>"}} or null,
   "parties":   [{{"value": "Acme Ltd", "quote": "<exact text>"}}],   // every named company/person
@@ -241,7 +248,7 @@ character-for-character. If a field is absent or unclear use null / []. Never in
 def _field_ok(kind: str, value: str, quote: str, norm_text: str, dayfirst: bool) -> bool:
     if not quote or _squash(quote) not in norm_text:
         return False
-    if kind == "amount" or kind == "tax":
+    if kind in ("amount", "tax", "subtotal"):
         v = parse_money(value)
         return v is not None and any(abs(x) == abs(v) for x in money_in(quote))
     if kind == "date":
@@ -266,7 +273,7 @@ class LLMExtractor:
     def extract(self, doc: SourceDocument) -> list[Voucher]:
         norm_text = _squash(doc.text)
         reply = self.chat.chat(EXTRACT_PROMPT, "<untrusted_document_text>\n" + doc.text[: self.max_chars]
-                               + "\n</untrusted_document_text>")
+                               + "\n</untrusted_document_text>", json_mode=True)
         m = re.search(r"\{.*\}", reply, re.DOTALL)
         if not m:
             raise ValueError("model returned no JSON")
@@ -297,12 +304,14 @@ class LLMExtractor:
                 return res
 
             amount, tax, dt, cur = one("amount"), one("tax"), one("date"), one("currency")
-            claimed = sum(1 for k in ("amount", "tax", "date", "currency") if item.get(k)) + sum(
+            subtotal = one("subtotal")
+            claimed = sum(1 for k in ("amount", "subtotal", "tax", "date", "currency") if item.get(k)) + sum(
                 len(item.get(k) or []) for k in ("parties", "references", "approvals"))
             doc_type = item.get("doc_type") if item.get("doc_type") in DOC_TYPES else "unknown"
             v = Voucher(
                 id=f"{doc.id}#{n}", source_doc=doc.id, doc_type=doc_type,
                 date=date.fromisoformat(dt) if dt else None, amount=abs(parse_money(amount)) if amount else None,
+                subtotal=abs(parse_money(subtotal)) if subtotal else None,
                 tax=abs(parse_money(tax)) if tax else None, currency=cur.upper() if cur else None,
                 parties=many("parties"), references=many("references"), approvals=many("approvals"),
                 confidence=0.0, method=doc.method, notes=notes)

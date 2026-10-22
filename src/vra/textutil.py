@@ -31,6 +31,12 @@ def normalize_name(value: str | None) -> str:
     return " ".join(tokens)
 
 
+def canon_name(name: str | None, aliases: dict[str, str] | None = None) -> str:
+    """Normalised name with reviewer-approved aliases applied (alias -> canonical)."""
+    n = normalize_name(name)
+    return (aliases or {}).get(n, n)
+
+
 def similarity(a: str, b: str) -> float:
     """0..1 similarity of two already-normalised strings."""
     if not a or not b:

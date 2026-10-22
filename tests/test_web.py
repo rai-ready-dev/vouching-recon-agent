@@ -225,7 +225,7 @@ def test_correction_rerun_carries_decisions_forward(web, demo):
     # reviewer says the document total was misread: correct it to 1,500.00
     vid = c.get(f"/api/runs/{r1}/item", params={"id": "Transaction:R11"}).json()["voucher"]["id"]
     assert c.put(f"/api/engagements/{eid}/voucher-override",
-                 json={"voucher_id": vid, "fields": {"amount": "1500.00"}, "note": "misread"}).status_code == 200
+                 json={"voucher_id": vid, "fields": {"amount": "1500.00", "subtotal": "1428.57", "tax": "71.43"}, "note": "misread"}).status_code == 200
     assert c.put(f"/api/engagements/{eid}/voucher-override", json={"voucher_id": vid, "fields": {"bogus": 1}}).status_code == 400
     r2 = do_run(c, eid)["id"]
     d11 = c.get(f"/api/runs/{r2}/item", params={"id": "Transaction:R11"}).json()
@@ -268,7 +268,7 @@ def test_upload_validation(web, demo, tmp_path):
                                            files=[("files", (name, data))])
     assert post("document", "../../evil.txt", b"x").status_code == 400            # traversal
     assert post("document", "note.exe", b"x").status_code == 400                  # type
-    assert post("ledger", "ledger.pdf", b"x").status_code == 400
+    assert post("ledger", "ledger.exe", b"x").status_code == 400
     assert post("document", "ok.txt", b"Invoice No: A-1\nTotal 5.00").status_code == 200
     assert post("document", ".hidden.txt", b"x").json()["stored"] == []
     files = c.get(f"/api/engagements/{eid}").json()["files"]

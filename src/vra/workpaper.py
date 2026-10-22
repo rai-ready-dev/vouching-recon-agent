@@ -68,6 +68,33 @@ def render_workpaper(report: RunReport, store: EvidenceStore | None = None, mani
         out += ["## Documents not linked to any ledger entry (possible unrecorded items)", ""]
         out += [f"- {d}" for d in report.unlinked_documents]
         out.append("")
+    if report.sampling:
+        sm = report.sampling
+        out += ["## Sampling of entries with no exceptions", "",
+                f"- Method: {sm['method']}" + (f", interval {float(sm['interval']):,.2f}, seed {sm['seed']}: {sm['selected']} of "
+                                               f"{sm['clean_entries']} clean entries selected" if "interval" in sm else
+                                               f" ({float(sm['limit']):,.2f})"), ""]
+    if report.linking and (report.linking.get("split_payments") or report.linking.get("ai_links")):
+        lk = report.linking
+        out += ["## Linking notes", "", f"- Entries supported by several documents that together equal the amount (split payments): {lk.get('split_payments', 0)}",
+                f"- Entries linked by the AI adjudicator (flagged for confirmation): {lk.get('ai_links', 0)}", ""]
+    ins = report.insights
+    if ins:
+        out += ["## Population analytics (context, not exceptions)", ""]
+        b = ins.get("benford", {})
+        out.append(f"- Benford first-digit test: {b.get('note', '')}")
+        if ins.get("reference_gaps"):
+            out += [f"- Gaps in numbered references: " + "; ".join(f"{g['prefix']} {g['range'][0]}-{g['range'][1]}: {g['missing_count']} missing "
+                                                                  f"(e.g. {', '.join(map(str, g['missing'][:6]))})" for g in ins["reference_gaps"])]
+        if ins.get("repeated_amounts"):
+            out.append(f"- Same counterparty and amount on several entries: {len(ins['repeated_amounts'])} group(s)")
+        if "weekend_share" in ins:
+            out.append(f"- Entries dated on a weekend: {ins['weekend_share']:.0%}; round amounts: {ins['round_amount_share']:.0%}; "
+                       f"just below the approval limit: {ins['near_approval_limit']}")
+        if ins.get("concentration"):
+            c = ins["concentration"][0]
+            out.append(f"- Largest counterparty by value: {c['counterparty']} ({c['share']:.0%} of the total)")
+        out.append("")
     if report.proof:
         p = report.proof
         out += ["## Reconciliation proof", "",

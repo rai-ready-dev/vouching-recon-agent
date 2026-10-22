@@ -23,6 +23,9 @@ class Classification(str, Enum):
     CUTOFF = "cutoff"
     AUTHORISATION = "authorisation"
     DATA_QUALITY = "data_quality"
+    DOCUMENT_INTEGRITY = "document_integrity"
+    LINK_UNCERTAIN = "link_uncertain"
+    RISK_SIGNAL = "risk_signal"
     POSSIBLE_FRAUD_RISK = "possible_fraud_risk"
     OTHER = "other"
 

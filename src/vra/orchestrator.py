@@ -21,7 +21,9 @@ from .evidence import EvidenceStore
 from .findings import Finding
 from .money import q2
 from .policy import Policy
-from .linking import link_documents
+from .analytics import population_insights
+from .linking import link_all
+from .sampling import mus_sample
 from .programmes import Ctx, load_programmes, programme_for, run_programme
 from .records import (BankLine, GLEntry, GoodsReceipt, Invoice, PurchaseOrder, SourceFile,
                       Transaction, Voucher)
@@ -35,14 +37,15 @@ class _Base:
         self.store, self.policy, self.analyst, self.log = store, policy, analyst, log
         self._fallback = RuleBasedAnalyst()
 
-    def _case(self, domain: str, subject_id: str, findings: list[Finding]) -> CaseResult:
+    def _case(self, domain: str, subject_id: str, findings: list[Finding], cheap: bool = False) -> CaseResult:
         ev_ids = sorted({e for f in findings for e in f.evidence_ids})
         bundle = CaseBundle(case_id=f"case:{subject_id}", subject_id=subject_id, domain=domain,
                             findings=findings, evidence={e: self.store.payload(e) for e in ev_ids})
         problems: list[str] = []
         try:
-            analysis: Analysis | None = self.analyst.analyze(bundle)
-            analysis.analyst = analysis.analyst or self.analyst.name
+            who = self._fallback if cheap else self.analyst  # pure risk signals do not need a model call
+            analysis: Analysis | None = who.analyze(bundle)
+            analysis.analyst = analysis.analyst or who.name
         except Exception as exc:  # model/network/parse failure -> never fail silently
             self.log.append("analyst_error", {"case": bundle.case_id, "analyst": self.analyst.name,
                                               "error": f"{type(exc).__name__}: {exc}"})
@@ -141,6 +144,9 @@ class ReconciliationWorkflow(_Base):
         return self._finish(report)
 
 
+SIGNAL_CODES = {"JUST_BELOW_LIMIT", "WEEKEND_POSTING", "ROUND_AMOUNT"}
+
+
 class DocumentVouchingWorkflow(_Base):
     """Vouch any ledger entries (purchases, sales, expenses, payroll, assets, ...) to supporting documents."""
 
@@ -149,7 +155,9 @@ class DocumentVouchingWorkflow(_Base):
     def run(self, transactions: list[Transaction], vouchers: list[Voucher], sources: list[SourceFile],
             period: tuple[date, date] | None = None, programmes: dict | None = None,
             intake_issues: list[str] | None = None,
-            forced_links: dict[str, str | None] | None = None) -> RunReport:
+            forced_links: dict[str, str | None] | None = None,
+            aliases: dict[str, str] | None = None, adjudicator=None,
+            sample_interval: Decimal | None = None, sample_seed: int = 1) -> RunReport:
         programmes = programmes or load_programmes()
         for rec in (*sources, *vouchers, *transactions):
             self.store.add(rec, source=type(rec).__name__)
@@ -157,18 +165,20 @@ class DocumentVouchingWorkflow(_Base):
                                           "vouchers": len(vouchers),
                                           "period": [d.isoformat() for d in period] if period else None})
         by_src = {s.id: s for s in sources}
-        by_vid = {v.id: v for v in vouchers}
-        links = link_documents(transactions, vouchers, by_src, self.policy, forced_links)
-        self.links = links
+        res = link_all(transactions, vouchers, by_src, self.policy, forced_links, aliases, adjudicator)
+        self.links, self.link_result = res.links, res
+        for syn in res.synthetic:  # combined vouchers for split payments become evidence too
+            self.store.add(syn, source="Voucher")
+        by_vid = {v.id: v for v in (*vouchers, *res.synthetic)}
         usage: dict[str, list[Transaction]] = defaultdict(list)
         for t in transactions:
-            if links[t.id].voucher_id:
-                usage[links[t.id].voucher_id].append(t)
-        ctx = Ctx(self.policy, period, usage)
+            if res.links[t.id].voucher_id:
+                usage[res.links[t.id].voucher_id].append(t)
+        ctx = Ctx(self.policy, period, usage, by_src, aliases or {})
         for t in transactions:
-            lk = links[t.id]
+            lk = res.links[t.id]
             self.log.append("linked", {"txn": t.evidence_id, "voucher": lk.voucher_id, "score": lk.score,
-                                       "reasons": list(lk.reasons)})
+                                       "reasons": list(lk.reasons), "note": lk.note})
 
         report = RunReport(
             domain="document_vouching", policy_version=self.policy.version, analyst=self.analyst.name,
@@ -176,26 +186,55 @@ class DocumentVouchingWorkflow(_Base):
             period=f"{period[0]} to {period[1]}" if period else "",
             intake_issues=list(intake_issues or []),
             documents=[{"file": s.filename, "kind": s.kind, "method": s.method, "sha256": s.sha256[:16]}
-                       for s in sources])
+                       for s in sources],
+            linking={"ai_calls": res.ai_calls, "ai_links": res.ai_links, "ai_errors": res.ai_errors,
+                     "split_payments": len(res.synthetic)},
+            insights=population_insights(transactions, self.policy))
+
+        # 1) deterministic tests for every entry
         used_types: dict[str, list[str]] = {}
-        for n, t in enumerate(sorted(transactions, key=lambda x: (x.date, x.id))):
+        outcomes: list[tuple[Transaction, list]] = []
+        order = sorted(transactions, key=lambda x: (x.date, x.id))
+        for n, t in enumerate(order):
             if self.on_progress:
-                self.on_progress(n, len(transactions))
+                self.on_progress(n, len(order))
             key, steps = programme_for(t.type, programmes)
             used_types[key] = [s["test"] for s in steps]
             if key == "other" and t.type.lower() != "other":
                 self.log.append("unknown_type", {"txn": t.evidence_id, "type": t.type, "used": "other"})
-            lk = links[t.id]
+            lk = res.links[t.id]
             v = by_vid.get(lk.voucher_id) if lk.voucher_id else None
-            fs = run_programme(t, v, lk, steps, ctx)
+            outcomes.append((t, run_programme(t, v, lk, steps, ctx)))
+
+        # 2) which clean entries are sampled for a look (statistical, reproducible) vs cleared
+        clean = [(t.evidence_id, t.amount) for t, fs in outcomes if not fs]
+        picked: set[str] | None = None
+        if sample_interval:
+            picked = mus_sample(clean, sample_interval, sample_seed)
+            report.sampling = {"method": "monetary-unit sampling", "interval": str(sample_interval), "seed": sample_seed,
+                               "clean_entries": len(clean), "selected": len(picked)}
+            self.log.append("sampling", report.sampling)
+        else:
+            report.sampling = {"method": "all clean entries above the sampling limit",
+                               "limit": str(self.policy.auto_clear_limit)}
+
+        # 3) cases (explained and verified) and cleared items
+        for t, fs in outcomes:
             if fs:
-                report.cases.append(self._case("document_vouching", t.evidence_id, fs))
+                only_signals = all(f.code.value in SIGNAL_CODES for f in fs)
+                report.cases.append(self._case("document_vouching", t.evidence_id, fs, cheap=only_signals))
             else:
-                d = route_clean(t.amount, self.policy)
+                if picked is not None:
+                    d = Disposition.REVIEW if t.evidence_id in picked else Disposition.AUTO_CLEARED
+                else:
+                    d = route_clean(t.amount, self.policy)
                 report.cleared.append(ClearedItem(subject_id=t.evidence_id, amount=t.amount, disposition=d))
                 self.log.append("item_cleared", {"subject": t.evidence_id, "disposition": d.value})
         report.programmes = used_types
-        linked = {l.voucher_id for l in links.values() if l.voucher_id}
+        linked = {l.voucher_id for l in res.links.values() if l.voucher_id}
+        for syn_id, parts in res.combined.items():
+            if syn_id in linked:
+                linked.update(parts)
         report.unlinked_documents = sorted({by_src[v.source_doc].filename for v in vouchers
                                             if v.id not in linked and v.source_doc in by_src})
         return self._finish(report)

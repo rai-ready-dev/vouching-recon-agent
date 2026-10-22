@@ -31,6 +31,8 @@ class Policy:
     auto_clear_limit: Decimal = Decimal("5000")   # clean invoices above this are still sampled
     auto_clear_confidence: float = 0.85
     # document vouching
+    risk_signals: bool = False                    # extra low-severity analytics (weekend, round, just-below-limit)
+    combine_max_docs: int = 4                     # split payments: largest set of documents that may support one entry
     min_extraction_confidence: float = 0.70
     link_threshold: float = 0.50
     link_date_window_days: int = 60
