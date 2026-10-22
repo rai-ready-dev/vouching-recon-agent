@@ -135,7 +135,9 @@ def _xlsx_text(raw: bytes) -> tuple[str, int, list[str]]:
                 out.append("\t".join(cells).rstrip())
     p = wb.properties
     flags = _office_flags("Workbook", p.created, p.modified, p.creator, p.lastModifiedBy) if p else []
-    return "\n".join(out), len(wb.worksheets), flags
+    n_sheets = len(wb.worksheets)
+    wb.close()
+    return "\n".join(out), n_sheets, flags
 
 
 def _docx_text(raw: bytes) -> tuple[str, list[str]]:

@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+
+def safe_console() -> None:
+    """Never crash on printing a name the Windows console encoding cannot show (Arabic, Chinese, ...)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def parse_env(text: str) -> dict[str, str]:

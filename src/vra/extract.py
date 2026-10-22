@@ -16,7 +16,7 @@ from typing import Protocol
 from .ingest import SourceDocument
 from .llm import ChatClient
 from .records import Voucher
-from .textutil import normalize_name, normalize_ref, similarity
+from .textutil import normalize_name, normalize_ref, similarity, to_ascii_digits
 
 DOC_TYPES = ("invoice", "receipt", "credit_note", "payslip", "expense_report", "remittance",
              "bank_advice", "statement", "purchase_order", "contract", "quotation", "unknown")
@@ -86,7 +86,8 @@ def money_in(text: str) -> list[Decimal]:
 
 
 def _squash(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+    """Letters and digits of any script, lower-cased: the form in which quotes are compared with the document."""
+    return re.sub(r"[\W_]+", "", to_ascii_digits(s).lower())
 
 
 # ---------------------------------------------------------------- heuristic extractor
@@ -124,7 +125,7 @@ _SKIP_DATE = re.compile(r"due\s+date|delivery\s+date|valid\s+until|expiry", re.I
 
 def _clean_party(v: str) -> str:
     v = re.sub(r"<[^>]*>", "", v).strip(" \t,;")
-    return "" if not v or "@" in v or not re.search(r"[A-Za-z]", v) else v
+    return "" if not v or "@" in v or not any(ch.isalpha() for ch in v) else v
 
 
 class Extractor(Protocol):
@@ -142,7 +143,7 @@ class HeuristicExtractor:
         self.dayfirst = dayfirst
 
     def extract(self, doc: SourceDocument) -> list[Voucher]:
-        text = doc.text
+        text = to_ascii_digits(doc.text)
         lines = [l for l in text.splitlines() if l.strip() and not l.startswith("[Sheet:")]
         head = " ".join(lines[:12]).lower() + " " + doc.filename.lower()
         doc_type = next((t for t, pat in _TYPE_PATTERNS if re.search(pat, head)), "unknown")
@@ -246,7 +247,7 @@ character-for-character. If a field is absent or unclear use null / []. Never in
 
 
 def _field_ok(kind: str, value: str, quote: str, norm_text: str, dayfirst: bool) -> bool:
-    if not quote or _squash(quote) not in norm_text:
+    if not quote or not _squash(quote) or _squash(quote) not in norm_text:  # an empty squash must never match vacuously
         return False
     if kind in ("amount", "tax", "subtotal"):
         v = parse_money(value)
@@ -271,8 +272,9 @@ class LLMExtractor:
         self.name = f"llm:{chat.name}"
 
     def extract(self, doc: SourceDocument) -> list[Voucher]:
-        norm_text = _squash(doc.text)
-        reply = self.chat.chat(EXTRACT_PROMPT, "<untrusted_document_text>\n" + doc.text[: self.max_chars]
+        text = to_ascii_digits(doc.text)
+        norm_text = _squash(text)
+        reply = self.chat.chat(EXTRACT_PROMPT, "<untrusted_document_text>\n" + text[: self.max_chars]
                                + "\n</untrusted_document_text>", json_mode=True)
         m = re.search(r"\{.*\}", reply, re.DOTALL)
         if not m:

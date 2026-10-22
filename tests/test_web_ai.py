@@ -472,3 +472,32 @@ def test_metered_chat_retries_only_retryable_errors():
     with pytest.raises(RuntimeError):
         m2.chat("s", "u")
     assert t.summary()["by_purpose"]["explain"] == {**t.summary()["by_purpose"]["explain"], "calls": 1, "errors": 1, "retries": 0}
+
+
+def test_non_latin_names_survive_the_whole_pipeline(web):
+    """Arabic and Chinese names must work end to end (and on Windows, where the default file encoding cannot hold them)."""
+    app, c = web
+    eid = new_engagement(c)
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws.append(["Date", "Counterparty", "Reference", "Amount"])
+    ws.append(["2026-02-03", "شركة النور للتجارة ذ.م.م", "INV-9", 1250])
+    ws.append(["2026-02-04", "深圳市宏达贸易有限公司", "INV-10", 800])
+    buf = io.BytesIO(); wb.save(buf)
+    c.post(f"/api/engagements/{eid}/files", data={"kind": "ledger"}, files=[("files", ("ledger.xlsx", buf.getvalue()))])
+    inv = lambda no, amt, who: f"{who}\nTAX INVOICE\nInvoice No: {no}\nInvoice Date: 03 Feb 2026\nSupplier: {who}\nTotal Amount Due: USD {amt}\n".encode("utf-8")
+    c.post(f"/api/engagements/{eid}/files", data={"kind": "document"}, files=[
+        ("files", ("نور.txt", inv("INV-9", "1,250.00", "شركة النور للتجارة ذ.م.م"))),
+        ("files", ("宏达.txt", inv("INV-10", "850.00", "深圳市宏达贸易有限公司")))])
+    run = do_run(c, eid)
+    rid = run["id"]
+    ex = exceptions(c, rid)
+    assert list(ex.values()) == [{"AMOUNT_MISMATCH"}]                                   # 850 vs 800 on the Chinese supplier
+    d = c.get(f"/api/runs/{rid}/item", params={"id": next(iter(ex))}).json()
+    assert d["transaction"]["counterparty"] == "深圳市宏达贸易有限公司" and "宏达" in d["source_file"]["filename"]
+    assert "شركة النور" in c.get(f"/api/runs/{rid}/export/md").content.decode("utf-8")
+    import docx as _docx
+    doc = _docx.Document(io.BytesIO(c.get(f"/api/runs/{rid}/export/docx").content))
+    assert any("深圳" in cell.text for tbl in doc.tables for row in tbl.rows for cell in row.cells)
+    assert "Transaction:R2" in {i["txn_id"] for i in c.get(f"/api/runs/{rid}/items", params={"q": "النور"}).json()["items"]}
+    assert "شركة" in c.get(f"/api/runs/{rid}/document", params={"name": "نور.txt"}).content.decode("utf-8")
+    assert c.get(f"/api/runs/{rid}/document-text", params={"name": "نور.txt"}).json()["text"].startswith("شركة")

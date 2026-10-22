@@ -45,7 +45,7 @@ class Policy:
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
-        raw = json.loads(Path(path).read_text())
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
         kwargs = {}
         for f in fields(cls):
             if f.name in raw:

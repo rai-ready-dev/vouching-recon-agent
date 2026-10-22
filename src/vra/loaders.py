@@ -9,7 +9,7 @@ from .records import BankLine, GLEntry, GoodsReceipt, Invoice, PurchaseOrder
 
 
 def _json_list(path: Path, model) -> list:
-    return [model.model_validate(r) for r in json.loads(path.read_text())]
+    return [model.model_validate(r) for r in json.loads(path.read_text(encoding="utf-8"))]
 
 
 def load_vouching_data(folder: str | Path):
@@ -20,7 +20,7 @@ def load_vouching_data(folder: str | Path):
 
 
 def _csv_rows(path: Path):
-    with path.open(newline="") as fh:
+    with path.open(newline="", encoding="utf-8-sig") as fh:
         yield from csv.DictReader(fh)
 
 

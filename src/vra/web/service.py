@@ -244,29 +244,35 @@ class Service:
                 zf = zipfile.ZipFile(tmp)
             except zipfile.BadZipFile:
                 raise ApiError(400, "That zip file is corrupt or not a zip file.")
-            infos = [i for i in zf.infolist() if not i.is_dir()]
-            if len(infos) > self.settings.max_zip_files:
-                raise ApiError(413, f"Zip contains more than {self.settings.max_zip_files} files.")
-            if sum(i.file_size for i in infos) > self.settings.max_zip_mb * 1024 * 1024:
-                raise ApiError(413, f"Zip expands to more than {self.settings.max_zip_mb} MB.")
-            stored, total_written = [], 0
-            for info in infos:
-                if info.flag_bits & 0x1:
-                    raise ApiError(400, "Password-protected zip files are not supported; remove the password first.")
-                rel = safe_relpath(info.filename)
-                if rel is None or Path(rel).suffix.lower() not in SUPPORTED_EXT:
-                    continue
-                with zf.open(info) as member:
-                    sha, fsize = self._store_blob(eid, member, limit)
-                total_written += fsize
-                if total_written > self.settings.max_zip_mb * 1024 * 1024:
-                    raise ApiError(413, f"Zip expands to more than {self.settings.max_zip_mb} MB.")
-                self._register_file(user, eid, "document", rel, sha, fsize)
-                stored.append({"filename": rel, "size": fsize})
-            return stored
+            try:
+                return self._store_zip_members(zf, user, eid, limit)
+            finally:
+                zf.close()
         finally:
             if tmp.exists():
                 tmp.unlink()
+
+    def _store_zip_members(self, zf: zipfile.ZipFile, user: dict, eid: int, limit: int) -> list[dict]:
+        infos = [i for i in zf.infolist() if not i.is_dir()]
+        if len(infos) > self.settings.max_zip_files:
+            raise ApiError(413, f"Zip contains more than {self.settings.max_zip_files} files.")
+        if sum(i.file_size for i in infos) > self.settings.max_zip_mb * 1024 * 1024:
+            raise ApiError(413, f"Zip expands to more than {self.settings.max_zip_mb} MB.")
+        stored, total_written = [], 0
+        for info in infos:
+            if info.flag_bits & 0x1:
+                raise ApiError(400, "Password-protected zip files are not supported; remove the password first.")
+            rel = safe_relpath(info.filename)
+            if rel is None or Path(rel).suffix.lower() not in SUPPORTED_EXT:
+                continue
+            with zf.open(info) as member:
+                sha, fsize = self._store_blob(eid, member, limit)
+            total_written += fsize
+            if total_written > self.settings.max_zip_mb * 1024 * 1024:
+                raise ApiError(413, f"Zip expands to more than {self.settings.max_zip_mb} MB.")
+            self._register_file(user, eid, "document", rel, sha, fsize)
+            stored.append({"filename": rel, "size": fsize})
+        return stored
 
     def remove_file(self, user: dict, fid: int) -> None:
         row = self.db.one("SELECT * FROM files WHERE id = ?", (fid,))
@@ -485,7 +491,7 @@ class Service:
         path = self.settings.runs_dir / str(rid) / "documents.json"
         if not path.is_file():
             raise ApiError(404, "No document data for this run.")
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
 
     EDITABLE = {"doc_type", "date", "amount", "subtotal", "tax", "currency", "parties", "references", "approvals"}
 
@@ -652,9 +658,9 @@ class Service:
         if run["status"] != "completed":
             raise ApiError(409, "The run has not completed.")
         wd = self.settings.runs_dir / str(rid)
-        perf = json.loads((wd / "perf.json").read_text()) if (wd / "perf.json").is_file() else {}
-        bench = json.loads((wd / "benchmark.json").read_text()) if (wd / "benchmark.json").is_file() else None
-        report = json.loads((wd / "report.json").read_text()) if (wd / "report.json").is_file() else {}
+        perf = json.loads((wd / "perf.json").read_text(encoding="utf-8")) if (wd / "perf.json").is_file() else {}
+        bench = json.loads((wd / "benchmark.json").read_text(encoding="utf-8")) if (wd / "benchmark.json").is_file() else None
+        report = json.loads((wd / "report.json").read_text(encoding="utf-8")) if (wd / "report.json").is_file() else {}
         return {"run": {"id": rid, "started_at": run["started_at"], "options": run["options"]}, "perf": perf,
                 "benchmark": bench, "review": self.review_metrics(rid), "insights": report.get("insights", {}),
                 "sampling": report.get("sampling", {}), "linking": report.get("linking", {})}

@@ -19,7 +19,7 @@ class AuditLog:
         self._clock = clock
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text("")
+            self._path.write_text("", encoding="utf-8")
 
     @staticmethod
     def _hash(entry: dict) -> str:
@@ -35,7 +35,7 @@ class AuditLog:
         entry["hash"] = self._hash(entry)
         self.entries.append(entry)
         if self._path:
-            with self._path.open("a") as fh:
+            with self._path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, default=str) + "\n")
         return entry
 

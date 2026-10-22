@@ -292,7 +292,7 @@ class Runner:
                 other = make_extractor(other_kind)
                 other_intake = build_vouchers(docs_dir, other, ocr, None, workers if other_kind == "foundry" else 1)
                 bench = compare_readers(intake.vouchers, other_intake.vouchers, extractor.name, other.name)
-                (workdir / "benchmark.json").write_text(json.dumps(bench))
+                (workdir / "benchmark.json").write_text(json.dumps(bench), encoding="utf-8")
 
         self._set(rid, progress="Applying reviewer corrections")
         ov = svc.overrides(eid)
@@ -319,7 +319,7 @@ class Runner:
         programmes = None
         if opts["programmes_json"]:
             p = workdir / "programmes.json"
-            p.write_text(opts["programmes_json"])
+            p.write_text(opts["programmes_json"], encoding="utf-8")
             programmes = load_programmes(p)
         period = None
         if eng["period_start"] and eng["period_end"]:
@@ -414,10 +414,10 @@ class Runner:
                                  "issues": msgs, "vouchers": []})
         docs_out.sort(key=lambda d: d["filename"])
         (workdir / "documents.json").write_text(json.dumps(
-            {"documents": docs_out, "issues": other_issues, "unlinked_documents": report.unlinked_documents}))
-        (workdir / "report.json").write_text(report.model_dump_json(indent=1))
-        (workdir / "manifest.json").write_text(json.dumps([r.model_dump() for r in store.manifest()], indent=1))
-        (workdir / "policy.json").write_text(json.dumps(policy.to_dict(), indent=1))
+            {"documents": docs_out, "issues": other_issues, "unlinked_documents": report.unlinked_documents}), encoding="utf-8")
+        (workdir / "report.json").write_text(report.model_dump_json(indent=1), encoding="utf-8")
+        (workdir / "manifest.json").write_text(json.dumps([r.model_dump() for r in store.manifest()], indent=1), encoding="utf-8")
+        (workdir / "policy.json").write_text(json.dumps(policy.to_dict(), indent=1), encoding="utf-8")
 
         grounding_drops = sum(1 for v in intake.vouchers for n in v.notes if "not found in the document" in n)
         analyst_errors = sum(1 for e in audit.entries if e["event"] == "analyst_error")
@@ -439,7 +439,7 @@ class Runner:
             "readers": {"documents": extractor.name, "explanations": analyst.name, "ocr": ocr_name, "source_rows": row_reader.name},
             "benchmark": bench["fields"] if bench else None,
         }
-        (workdir / "perf.json").write_text(json.dumps(perf, default=str))
+        (workdir / "perf.json").write_text(json.dumps(perf, default=str), encoding="utf-8")
 
         summary = {
             "population": report.population, "population_value": str(report.population_value),

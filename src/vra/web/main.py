@@ -8,7 +8,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from ..envfile import load_env_file
+from ..envfile import load_env_file, safe_console
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("--role", choices=["admin", "reviewer", "preparer"], default="preparer")
     u.add_argument("--name", default="")
     args = ap.parse_args(argv)
+    safe_console()
     load_env_file(".env")
 
     from .app import create_app

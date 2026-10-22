@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .extract import find_dates, parse_money
 from .records import Transaction
+from .textutil import to_ascii_digits
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "id": ("id", "txn id", "transaction id", "entry no", "journal no", "voucher no", "line"),
@@ -70,7 +71,7 @@ def _to_date(v, dayfirst: bool) -> date | None:
         return v.date()
     if isinstance(v, date):
         return v
-    ds = find_dates(str(v or ""), dayfirst)
+    ds = find_dates(to_ascii_digits(str(v or "")), dayfirst)
     return ds[0] if ds else None
 
 
@@ -79,7 +80,7 @@ def _to_amount(v) -> Decimal | None:
         return None
     if isinstance(v, (int, float, Decimal)):
         return Decimal(str(v))
-    cleaned = re.sub(r"[^\d.,()\-]", "", str(v))
+    cleaned = re.sub(r"[^\d.,()\-]", "", to_ascii_digits(str(v)))
     return parse_money(cleaned) if cleaned else None
 
 
@@ -91,8 +92,11 @@ def _sheets(path: Path):
             wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
         except Exception as exc:
             raise LedgerError(f"cannot open the workbook ({type(exc).__name__}); it may be corrupt or password-protected") from exc
-        for ws in wb.worksheets:
-            yield ws.title, [list(r) for r in ws.iter_rows(values_only=True)]
+        try:
+            for ws in wb.worksheets:
+                yield ws.title, [list(r) for r in ws.iter_rows(values_only=True)]
+        finally:
+            wb.close()
     else:
         raw = path.read_bytes()
         try:

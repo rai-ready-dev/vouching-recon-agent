@@ -21,9 +21,9 @@ def load_bundle(svc: Service, rid: int) -> dict:
 
         raise ApiError(409, "The run has not completed.")
     wd = svc.settings.runs_dir / str(rid)
-    report = RunReport.model_validate_json((wd / "report.json").read_text())
-    manifest = [EvidenceRef(**m) for m in json.loads((wd / "manifest.json").read_text())]
-    docs = json.loads((wd / "documents.json").read_text())
+    report = RunReport.model_validate_json((wd / "report.json").read_text(encoding="utf-8"))
+    manifest = [EvidenceRef(**m) for m in json.loads((wd / "manifest.json").read_text(encoding="utf-8"))]
+    docs = json.loads((wd / "documents.json").read_text(encoding="utf-8"))
     rows = svc.db.query("SELECT txn_id FROM items WHERE run_id=? ORDER BY txn_id", (rid,))
     items = []
     for r in rows:

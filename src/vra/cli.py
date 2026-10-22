@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .analysts import ChatAnalyst, build_analyst
 from .audit_log import AuditLog
-from .envfile import load_env_file
+from .envfile import load_env_file, safe_console
 from .evaluation import score
 from .evidence import EvidenceStore
 from .extract import HeuristicExtractor, LLMExtractor
@@ -26,11 +26,11 @@ from .workpaper import render_workpaper
 
 def _write(out: Path, name: str, report, store, log) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{name}_workpaper.md").write_text(render_workpaper(report, store))
-    (out / f"{name}_report.json").write_text(report.model_dump_json(indent=2))
+    (out / f"{name}_workpaper.md").write_text(render_workpaper(report, store), encoding="utf-8")
+    (out / f"{name}_report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
     (out / f"{name}_evidence_manifest.json").write_text(
-        json.dumps([r.model_dump() for r in store.manifest()], indent=2))
-    (out / f"{name}_audit_log.jsonl").write_text("".join(json.dumps(e, default=str) + "\n" for e in log.entries))
+        json.dumps([r.model_dump() for r in store.manifest()], indent=2), encoding="utf-8")
+    (out / f"{name}_audit_log.jsonl").write_text("".join(json.dumps(e, default=str) + "\n" for e in log.entries), encoding="utf-8")
 
 
 def _summary(label: str, report, extra: dict | None = None) -> None:
@@ -91,7 +91,7 @@ def _run_extract(docs, extractor, ocr, out: Path) -> None:
     intake = build_vouchers(docs, extractor, ocr)
     out.mkdir(parents=True, exist_ok=True)
     (out / "extracted.json").write_text(json.dumps(
-        {"vouchers": [v.model_dump(mode="json") for v in intake.vouchers], "issues": intake.issues}, indent=2))
+        {"vouchers": [v.model_dump(mode="json") for v in intake.vouchers], "issues": intake.issues}, indent=2), encoding="utf-8")
     print(f"\n{'document':34} {'type':14} {'date':11} {'amount':>12}  conf  refs / parties")
     for v in intake.vouchers:
         print(f"{v.source_doc[:33]:34} {v.doc_type:14} {str(v.date or '-'):11} "
@@ -160,6 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     ex.add_argument("--out", default="out")
     args = ap.parse_args(argv)
 
+    safe_console()
     load_env_file(".env")
     if args.cmd == "check-foundry":
         return _check_foundry()
@@ -172,7 +173,7 @@ def main(argv: list[str] | None = None) -> None:
         data_dir = out / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
         for name, rows in (("invoices", invoices), ("purchase_orders", pos), ("goods_receipts", grns)):
-            (data_dir / f"{name}.json").write_text(json.dumps([r.model_dump(mode="json") for r in rows], indent=1))
+            (data_dir / f"{name}.json").write_text(json.dumps([r.model_dump(mode="json") for r in rows], indent=1), encoding="utf-8")
         _run_vouching((invoices, pos, grns), policy, analyst, out, exp_v)
         bank, gl, exp_b = bank_dataset()
         _run_recon(bank, gl, AS_OF, policy, analyst, out, exp_b)

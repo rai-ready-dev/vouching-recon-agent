@@ -230,3 +230,50 @@ def test_intake_reports_corrupt_and_unsupported_files(tmp_path):
     assert len(res.vouchers) == 1
     text = " | ".join(res.issues)
     assert "broken.pdf" in text and "notes.zip" in text
+
+
+# ---------------------------------------------------------------- non-Latin scripts and Arabic-Indic digits
+def test_non_latin_names_normalise_and_match():
+    from vra.textutil import normalize_name, normalize_ref, similarity, to_ascii_digits
+
+    assert normalize_name("شركة النور للتجارة ذ.م.م") and normalize_name("深圳市宏达贸易有限公司")       # never empty
+    assert similarity(normalize_name("深圳市宏达贸易有限公司"), normalize_name("深圳市宏达贸易有限公司")) == 1.0
+    assert similarity(normalize_name("شركة النور"), normalize_name("شركة الفجر")) < 1.0
+    assert normalize_ref("فاتورة-١٢٣") == "فاتورة123"
+    assert to_ascii_digits("١٬٢٥٠٫٥٠ ۱۲۳") == "1,250.50 123"
+
+
+def test_arabic_indic_digits_in_a_document_are_read():
+    from vra.ingest import SourceDocument
+
+    text = "Acme Supplies Ltd\nTAX INVOICE\nInvoice No: INV-١٢٣\nInvoice Date: ٠٣/٠٢/٢٠٢٦\nTotal Amount Due: USD ١٬٢٥٠٫٠٠\n"
+    v = HeuristicExtractor().extract(SourceDocument("a", "a.txt", "txt", "x", text))[0]
+    assert v.amount == D("1250.00") and v.date == date(2026, 2, 3) and v.references == ["INV-123"]
+
+
+def test_arabic_supplier_is_kept_by_the_reader():
+    from vra.ingest import SourceDocument
+
+    text = "فاتورة ضريبية\nInvoice No: INV-9\nInvoice Date: 03 Feb 2026\nSupplier: شركة النور للتجارة\nTotal Amount Due: USD 100.00\n"
+    v = HeuristicExtractor().extract(SourceDocument("a", "a.txt", "txt", "x", text))[0]
+    assert "شركة النور للتجارة" in v.parties
+
+
+def test_grounding_cannot_pass_vacuously_on_a_quote_with_no_letters_or_digits():
+    from vra.ingest import SourceDocument
+
+    reply = json.dumps({"vouchers": [{"doc_type": "invoice", "confidence": 0.9,
+                                      "parties": [{"value": "Phantom Ltd", "quote": "---"}],          # nothing to compare: must be dropped
+                                      "references": [{"value": "ZZZ-1", "quote": "  "}]}]})
+    v = LLMExtractor(FakeChat([reply])).extract(SourceDocument("a", "a.txt", "txt", "x", "Invoice\nTotal 5.00\n"))[0]
+    assert v.parties == [] and v.references == [] and len(v.notes) == 2
+
+
+def test_llm_reader_keeps_a_grounded_arabic_party():
+    from vra.ingest import SourceDocument
+
+    text = "Supplier: شركة النور للتجارة\nTotal Amount Due: USD 100.00\n"
+    reply = json.dumps({"vouchers": [{"doc_type": "invoice", "confidence": 0.9,
+                                      "parties": [{"value": "شركة النور للتجارة", "quote": "Supplier: شركة النور للتجارة"}]}]})
+    v = LLMExtractor(FakeChat([reply])).extract(SourceDocument("a", "a.txt", "txt", "x", text))[0]
+    assert v.parties == ["شركة النور للتجارة"] and v.notes == []

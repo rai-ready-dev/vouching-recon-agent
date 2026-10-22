@@ -82,6 +82,11 @@ Every run keeps an exact snapshot of the files it used. **Back up the whole `vra
 * This is a single-server pilot design. Before wider rollout: Entra ID sign-in, Postgres, central backup, and an
   access review with your IT/security team.
 
+## Languages and scripts
+Text is handled as UTF-8 everywhere, company names in any script (Arabic, Chinese, Cyrillic, ...) are matched, and
+Arabic-Indic digits and separators (٠١٢٣ ٫ ٬) are read as numbers. The built-in reader recognises English labels
+(Invoice No, Total, Supplier, ...); for documents laid out in Arabic or another language, use the AI reader.
+
 ## Troubleshooting
 * *Port in use*: `vra-web serve --port 8010`.
 * *Run failed*: the Results tab shows the reason (for example "could not find a header row" for the ledger).

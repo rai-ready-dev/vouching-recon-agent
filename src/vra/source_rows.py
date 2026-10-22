@@ -13,6 +13,7 @@ from .extract import _field_ok, _squash, find_dates, money_in, parse_money
 from .ingest import SourceDocument
 from .llm import ChatClient
 from .records import Transaction
+from .textutil import to_ascii_digits
 
 _AMT = re.compile(r"-?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?|-?\(?\d+\.\d{2}\)?")
 _REF = re.compile(r"\b(?:[A-Za-z]{2,6}[-/]?\d{3,}|\d{5,})\b")
@@ -37,7 +38,7 @@ class HeuristicRowReader:
     name = "heuristic-rows"
 
     def rows(self, doc: SourceDocument, default_type: str = "purchase", dayfirst: bool = True):
-        lines = [l for l in doc.text.splitlines() if l.strip()]
+        lines = [l for l in to_ascii_digits(doc.text).splitlines() if l.strip()]
         has_balance = any(re.search(r"\bbalance\b", l, re.I) for l in lines[:40])
         out: list[Transaction] = []
         problems: list[str] = []
@@ -98,7 +99,7 @@ class LLMRowReader:
         out: list[Transaction] = []
         problems: list[str] = []
         dropped = 0
-        for chunk in self._chunks(doc.text):
+        for chunk in self._chunks(to_ascii_digits(doc.text)):
             norm = _squash(chunk)
             reply = self.chat.chat(ROW_PROMPT, "<untrusted_document_text>\n" + chunk + "\n</untrusted_document_text>", json_mode=True)
             m = re.search(r"\{.*\}", reply, re.DOTALL)

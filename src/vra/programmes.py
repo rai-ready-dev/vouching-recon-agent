@@ -225,7 +225,7 @@ TYPE_ALIASES = {"purchases": "purchase", "ap": "purchase", "payable": "purchase"
 def load_programmes(path: str | Path | None = None) -> dict[str, list[dict]]:
     progs = {k: [dict(s) for s in v] for k, v in PROGRAMMES.items()}
     if path:
-        for k, steps in json.loads(Path(path).read_text()).items():
+        for k, steps in json.loads(Path(path).read_text(encoding="utf-8")).items():
             for s in steps:
                 if s["test"] not in TESTS:
                     raise ValueError(f"unknown test '{s['test']}' in programme '{k}' (known: {sorted(TESTS)})")

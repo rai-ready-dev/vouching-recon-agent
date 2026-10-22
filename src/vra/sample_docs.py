@@ -111,11 +111,11 @@ def generate_demo(out: Path) -> tuple[Path, Path, dict[str, set[str]]]:
             (docs / f"{stem}.eml").write_text(
                 f"From: receipts@caferoma.example\nTo: claims@ourcompany.example\nDate: Mon, 16 Feb 2026 12:00:00 +0000\n"
                 f"Subject: Receipt {ref}\n\nMerchant: {party}\nReceipt No: {ref}\nEmployee: Sam Patel\n"
-                f"Total: USD {float(shown_total):,.2f}\n")
+                f"Total: USD {float(shown_total):,.2f}\n", encoding="utf-8")
         elif kind == "txt":
-            (docs / f"{stem}.txt").write_text("\n".join(lines) + "\n")
+            (docs / f"{stem}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         elif kind == "payslip":
-            (docs / f"{stem}.txt").write_text("\n".join(lines) + "\n")
+            (docs / f"{stem}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         elif kind == "docx":
             d = docx.Document()
             for l in lines:
@@ -132,7 +132,7 @@ def generate_demo(out: Path) -> tuple[Path, Path, dict[str, set[str]]]:
             (docs / f"{stem}.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
     # an invoice with no ledger entry (possible unrecorded liability)
     (docs / "orphan_inv_5099.txt").write_text("\n".join(_invoice("Acme Supplies Ltd", "INV-5099", "20 Mar 2026",
-                                                                  "Our Company LLC", "333.00")) + "\n")
+                                                                  "Our Company LLC", "333.00")) + "\n", encoding="utf-8")
     ledger = out / "ledger.xlsx"
     wb.save(ledger)
     return ledger, docs, expected
