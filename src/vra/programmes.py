@@ -52,6 +52,9 @@ def amount_agrees(t, v, link, ctx):
     diff = abs(t.amount - v.amount)
     if diff <= ctx.policy.abs_tolerance:
         return []
+    users = ctx.usage.get(v.id, [])
+    if len(users) > 1 and abs(sum((u.amount for u in users), Decimal(0)) - v.amount) <= ctx.policy.abs_tolerance:
+        return []  # several entries share one document (a batched deposit, a statement) and together equal it
     return [_f(FindingCode.AMOUNT_MISMATCH, severity_for(diff, ctx.policy), t, v,
                f"Ledger amount {q2(t.amount):,.2f} differs from the document total {q2(v.amount):,.2f} "
                f"(difference {q2(diff):,.2f}).", diff, (num(t, "amount"), num(v, "amount")))]
@@ -63,17 +66,25 @@ def counterparty_agrees(t, v, link, ctx):
     if not v.parties:
         return [_f(FindingCode.FIELD_MISSING, Severity.MEDIUM, t, v,
                    "No counterparty name could be read from the supporting document.")]
+    if _is_batch(link):
+        return []  # one statement line covering several customers cannot name them all
     want = canon_name(t.counterparty, ctx.aliases)
     best = max(similarity(want, canon_name(p, ctx.aliases)) for p in v.parties)
     if best >= ctx.policy.vendor_threshold:
         return []
+    if v.doc_type == "statement" and want and any(set(want.split()) <= set(canon_name(p, ctx.aliases).split()) for p in v.parties):
+        return []  # bank descriptions are noisy: all the words of the ledger name appearing is enough
     return [_f(FindingCode.COUNTERPARTY_MISMATCH, Severity.HIGH, t, v,
                f"Ledger counterparty '{t.counterparty}' is not named on the document "
                f"(document names: {', '.join(v.parties)}).", t.amount, (num(t, "amount"),))]
 
 
+def _is_batch(link) -> bool:
+    return any(r.startswith("batch deposit") for r in link.reasons)
+
+
 def reference_agrees(t, v, link, ctx):
-    if not t.reference or v.method == "combined":  # a payment covering several invoices has its own reference
+    if not t.reference or v.method == "combined" or _is_batch(link):  # a payment covering several invoices has its own reference
         return []
     if not v.references:
         return [_f(FindingCode.FIELD_MISSING, Severity.LOW, t, v,
@@ -209,8 +220,11 @@ PROGRAMMES: dict[str, list[dict]] = {
     "fixed_asset": [{"test": "doc_type", "allowed": ["invoice", "contract", "purchase_order"]},
                     {"test": "reference_agrees"}, {"test": "date_ok", "max_days_after": 3, "max_days_before": 180},
                     {"test": "approval_present", "limit": 5000}, *_COMMON],
+    # bank evidence: a payment clears (or a receipt is credited) a few days either side of the ledger date
     "bank_payment": [{"test": "doc_type", "allowed": ["remittance", "bank_advice", "invoice", "receipt", "statement"]},
-                     {"test": "reference_agrees"}, {"test": "date_ok", "max_days_after": 3, "max_days_before": 120}, *_COMMON],
+                     {"test": "reference_agrees"}, {"test": "date_ok", "max_days_after": 10, "max_days_before": 5}, *_COMMON],
+    "bank_receipt": [{"test": "doc_type", "allowed": ["remittance", "bank_advice", "receipt", "statement"]},
+                     {"test": "reference_agrees"}, {"test": "date_ok", "max_days_after": 10, "max_days_before": 5}, *_COMMON],
     "other": [{"test": "date_ok", "max_days_after": 3, "max_days_before": 180}, *_COMMON],
 }
 
@@ -219,7 +233,8 @@ TYPE_ALIASES = {"purchases": "purchase", "ap": "purchase", "payable": "purchase"
                 "sale": "sales", "revenue": "sales", "ar": "sales", "receivable": "sales",
                 "expenses": "expense", "claim": "expense", "travel": "expense", "salary": "payroll",
                 "wages": "payroll", "asset": "fixed_asset", "capex": "fixed_asset", "fa": "fixed_asset",
-                "payment": "bank_payment", "bank": "bank_payment"}
+                "payment": "bank_payment", "bank": "bank_payment", "cash_payment": "bank_payment", "receipts": "bank_receipt",
+                "deposit": "bank_receipt", "bank_deposit": "bank_receipt", "cash_receipt": "bank_receipt", "bank_receipts": "bank_receipt"}
 
 
 def load_programmes(path: str | Path | None = None) -> dict[str, list[dict]]:

@@ -235,6 +235,19 @@ class DocumentVouchingWorkflow(_Base):
         for syn_id, parts in res.combined.items():
             if syn_id in linked:
                 linked.update(parts)
-        report.unlinked_documents = sorted({by_src[v.source_doc].filename for v in vouchers
-                                            if v.id not in linked and v.source_doc in by_src})
+        from collections import Counter
+
+        per_doc = Counter(v.source_doc for v in vouchers)
+        labels = set()
+        for v in vouchers:
+            if v.id in linked or v.source_doc not in by_src:
+                continue
+            fn = by_src[v.source_doc].filename
+            if per_doc[v.source_doc] > 1:  # a statement: name the unmatched line, not just the file
+                what = " ".join(x for x in (str(v.date or ""), f"{q2(v.amount):,.2f}" if v.amount is not None else "",
+                                            v.parties[0] if v.parties else "", v.references[0] if v.references else "") if x)
+                labels.add(f"{fn}: {what}")
+            else:
+                labels.add(fn)
+        report.unlinked_documents = sorted(labels)
         return self._finish(report)

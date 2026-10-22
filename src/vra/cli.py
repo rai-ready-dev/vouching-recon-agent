@@ -20,6 +20,7 @@ from .orchestrator import DocumentVouchingWorkflow, ReconciliationWorkflow, Vouc
 from .programmes import load_programmes
 from .policy import Policy
 from .sample_data import AS_OF, bank_dataset, vouching_dataset
+from .sample_bank import PERIOD as BANK_PERIOD, generate_bank_demo
 from .sample_docs import PERIOD, generate_demo
 from .workpaper import render_workpaper
 
@@ -144,6 +145,8 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--gl", required=True)
     r.add_argument("--as-of", required=True, type=date.fromisoformat)
     r.add_argument("--out", default="out")
+    db = sub.add_parser("demo-bank", help="bank-statement vouching demo: cash book vouched to a PDF + Excel statement")
+    db.add_argument("--out", default="demo_bank_output")
     dd = sub.add_parser("demo-docs", help="mixed-format documents + ledger demo (PDF/Word/Excel/text/email/scan)")
     dd.add_argument("--out", default="demo_docs_output")
     vd = sub.add_parser("vouch-docs", help="vouch a ledger (xlsx/csv) to a folder of supporting documents")
@@ -178,6 +181,11 @@ def main(argv: list[str] | None = None) -> None:
         bank, gl, exp_b = bank_dataset()
         _run_recon(bank, gl, AS_OF, policy, analyst, out, exp_b)
         print(f"\nWorkpapers and audit logs written to {out.resolve()}")
+    elif args.cmd == "demo-bank":
+        out = Path(args.out)
+        ledger, evidence, exp = generate_bank_demo(out)
+        _run_docs(ledger, evidence, BANK_PERIOD, policy, analyst, extractor, ocr, out / "results", expected=exp, default_type="bank_payment")
+        print(f"\nSample inputs: {ledger}, {evidence}, {out / 'answer_key.csv'}\nOutputs written to {(out / 'results').resolve()}")
     elif args.cmd == "demo-docs":
         out = Path(args.out)
         ledger, docs, exp = generate_demo(out)

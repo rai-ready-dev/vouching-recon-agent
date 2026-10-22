@@ -38,6 +38,15 @@ the AI reader for harder layouts. If a statement shows a running balance, the en
 * **Compare readers**: reads every document twice (built-in and AI) and lists the disagreements on the Performance tab.
 * **Sampling**: pick one clean entry per N of value (monetary-unit sampling, reproducible with the seed), instead of the simple "above the limit" rule.
 
+## Vouching to bank statements
+A bank statement (PDF, Excel or CSV) is read **line by line**: every dated entry becomes its own piece of evidence, the
+running balance is never mistaken for the amount, and opening/closing balance lines are ignored. Use transaction types
+`bank_payment` and `bank_receipt`. Dates may differ from the book date by a few days (cheques clear later); the audit
+period drives the cut-off test. A **batched deposit** (one statement line equal to several cash book receipts of the same
+kind close in date) is matched as a batch and not flagged. Statement lines with no cash book entry (bank charges,
+interest) are listed individually under *documents not linked to any entry*. A worked example with an answer key is in
+`samples/bank_statement_demo/`.
+
 ## Teaching the agent
 * **Correct what was read** (including subtotal) and **Link a different document**: applied on the next run, recorded with your name, with your other decisions carried forward.
 * **These are the same company**: when a document names the supplier differently from the ledger. The alias is remembered for the engagement.

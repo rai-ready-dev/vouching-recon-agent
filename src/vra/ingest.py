@@ -101,13 +101,19 @@ def _decode(raw: bytes) -> str:
     return raw.decode("latin-1")
 
 
-def _cell(v) -> str:
+MONEY_HEADER = re.compile(r"debit|credit|amount|balance|total|value|price|cost|withdrawal|deposit|paid|payment", re.I)
+
+
+def _cell(v, money: bool = False) -> str:
     if v is None:
         return ""
     if isinstance(v, datetime):
         return v.date().isoformat()
     if isinstance(v, date):
         return v.isoformat()
+    if money and isinstance(v, (int, float, Decimal)) and not isinstance(v, bool):
+        d = Decimal(str(v))  # a money column: whole amounts must read as 4500.00, not 4500, or they look like ids
+        return f"{d.quantize(Decimal('0.01')):f}" if d.as_tuple().exponent >= -2 else f"{d:f}"
     if isinstance(v, (int,)) and not isinstance(v, bool):
         return str(v)
     if isinstance(v, float):
@@ -126,11 +132,25 @@ def _xlsx_text(raw: bytes) -> tuple[str, int, list[str]]:
     out: list[str] = []
     for ws in wb.worksheets:
         out.append(f"[Sheet: {ws.title}]")
-        for i, row in enumerate(ws.iter_rows(values_only=True)):
+        rows = []
+        for i, row in enumerate(ws.iter_rows()):
             if i >= MAX_SHEET_ROWS:
                 out.append(f"... truncated after {MAX_SHEET_ROWS} rows")
                 break
-            cells = [_cell(c) for c in row]
+            rows.append(list(row))
+        money_cols: set[int] = set()
+        for c in range(max((len(r) for r in rows), default=0)):
+            for ri, row in enumerate(rows):
+                cell = row[c] if c < len(row) else None
+                v = getattr(cell, "value", None)
+                if isinstance(v, float) and v == v and v != int(v):
+                    money_cols.add(c)  # some value has cents: it is a money column
+                elif isinstance(v, str) and ri < 15 and MONEY_HEADER.search(v):
+                    money_cols.add(c)  # headed like money
+                elif isinstance(v, (int, float)) and not isinstance(v, bool) and re.search(r"0\.0", getattr(cell, "number_format", "") or ""):
+                    money_cols.add(c)  # formatted with decimals in the workbook
+        for row in rows:
+            cells = [_cell(getattr(c, "value", None), money=i in money_cols) for i, c in enumerate(row)]
             if any(cells):
                 out.append("\t".join(cells).rstrip())
     p = wb.properties

@@ -45,6 +45,7 @@ workpaper. Full team guide: [docs/WEB_APP.md](docs/WEB_APP.md).
 ```bash
 pytest                                                  # 105 tests
 vra demo-docs                                           # mixed-format documents + ledger -> demo_docs_output/
+vra demo-bank                                           # cash book vouched to a PDF + Excel bank statement (see samples/)
 vra demo                                                # structured three-way-match + bank-rec demos
 ```
 

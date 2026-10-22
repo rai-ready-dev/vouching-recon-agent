@@ -111,6 +111,28 @@ def _find_combo(t: Transaction, pool: list[Voucher], p: Policy, aliases) -> tupl
     return None
 
 
+def _find_batch(v: Voucher, pool: list[Transaction], p: Policy) -> tuple[Transaction, ...] | None:
+    """Several ledger entries of the same kind, close in date, that add up to one document amount
+    (a batched deposit on a bank statement). Kept deliberately narrow so coincidences stay unlikely."""
+    if v.amount is None or v.date is None:
+        return None
+    by_type: dict[str, list[Transaction]] = {}
+    for t in pool:
+        if 0 < t.amount < v.amount and abs((t.date - v.date).days) <= p.date_window_days:
+            by_type.setdefault(t.type.lower(), []).append(t)
+    for group in by_type.values():
+        group = sorted(group, key=lambda t: (abs((t.date - v.date).days), t.id))[:10]
+        for k in range(2, p.combine_max_docs + 1):
+            best, best_gap = None, None
+            for combo in combinations(group, k):
+                gap = abs(sum((t.amount for t in combo), Decimal(0)) - v.amount)
+                if gap <= p.abs_tolerance and (best_gap is None or gap < best_gap):
+                    best, best_gap = combo, gap
+            if best:
+                return best
+    return None
+
+
 def link_all(txns: list[Transaction], vouchers: list[Voucher], sources: dict[str, SourceFile], policy: Policy,
              forced: dict[str, str | None] | None = None, aliases: dict[str, str] | None = None,
              adjudicator: Adjudicator | None = None) -> LinkResult:
@@ -148,6 +170,18 @@ def link_all(txns: list[Transaction], vouchers: list[Voucher], sources: dict[str
             free = [v for v in free if v.id not in used]
         else:
             still.append((t, ranked))
+
+    # batched deposits: documents (statement lines) still unclaimed that equal the sum of several unlinked entries
+    if policy.combine_max_docs >= 2 and still:
+        left = {t.id: (t, ranked) for t, ranked in still}
+        claimed_now = {l.voucher_id for l in res.links.values() if l.voucher_id}
+        for v in sorted((x for x in vouchers if x.id not in claimed_now and x.amount is not None), key=lambda x: -x.amount):
+            combo = _find_batch(v, [t for t, _ in left.values()], policy)
+            if combo:
+                for t in combo:
+                    res.links[t.id] = Link(t.id, v.id, 0.8, (f"batch deposit: {len(combo)} entries add up to this statement line",))
+                    left.pop(t.id, None)
+        still = [(t, r) for t, r in still if t.id in left]
 
     # AI adjudication for what is left
     for t, ranked in still:

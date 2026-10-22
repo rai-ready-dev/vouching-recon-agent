@@ -128,6 +128,21 @@ def _clean_party(v: str) -> str:
     return "" if not v or "@" in v or not any(ch.isalpha() for ch in v) else v
 
 
+def _detect_currency(text: str) -> str | None:
+    currency = None
+    for sym, code in SYMBOLS.items():
+        if sym in text:
+            currency = code
+    words = set(re.findall(r"\b[A-Z]{3}\b", text)) & CURRENCIES
+    if words:
+        currency = sorted(words)[0] if len(words) == 1 else currency or sorted(words)[0]
+    return currency
+
+
+_STATEMENT_HINT = re.compile(r"statement|\bbank\b|account\s+(?:no|number)|\biban\b|opening\s+balance|closing\s+balance", re.I)
+_NOT_A_STATEMENT = re.compile(r"\binvoice\b|\breceipt\b|\bpayslip\b|credit\s+note", re.I)
+
+
 class Extractor(Protocol):
     name: str
 
@@ -142,10 +157,27 @@ class HeuristicExtractor:
     def __init__(self, dayfirst: bool = True) -> None:
         self.dayfirst = dayfirst
 
+    def _statement_lines(self, doc: SourceDocument, text: str, lines: list[str]) -> list[Voucher]:
+        """A bank statement is evidence line by line: each dated entry becomes its own voucher."""
+        from .source_rows import HeuristicRowReader
+
+        head = " ".join(lines[:15]) + " " + doc.filename
+        rows, _ = HeuristicRowReader().rows(SourceDocument(doc.id, doc.filename, doc.kind, doc.sha256, text), "other", self.dayfirst)
+        hinted = bool(_STATEMENT_HINT.search(head))
+        if len(rows) < (3 if hinted else 8) or _NOT_A_STATEMENT.search(head):
+            return []
+        cur = _detect_currency(text)
+        return [Voucher(id=f"{doc.id}#{n}", source_doc=doc.id, doc_type="statement", date=r.date, amount=r.amount, currency=cur,
+                        parties=[r.counterparty] if r.counterparty else [], references=[r.reference] if r.reference else [],
+                        confidence=0.85, method=doc.method) for n, r in enumerate(rows, 1)]
+
     def extract(self, doc: SourceDocument) -> list[Voucher]:
         text = to_ascii_digits(doc.text)
         lines = [l for l in text.splitlines() if l.strip() and not l.startswith("[Sheet:")]
         head = " ".join(lines[:12]).lower() + " " + doc.filename.lower()
+        lines_as_vouchers = self._statement_lines(doc, text, lines)
+        if lines_as_vouchers:
+            return lines_as_vouchers
         doc_type = next((t for t, pat in _TYPE_PATTERNS if re.search(pat, head)), "unknown")
 
         amount, best = None, (0, -1)
@@ -171,13 +203,7 @@ class HeuristicExtractor:
         if m:
             tax = abs(parse_money(m.group(1)) or Decimal(0))
 
-        currency = None
-        for sym, code in SYMBOLS.items():
-            if sym in text:
-                currency = code
-        words = set(re.findall(r"\b[A-Z]{3}\b", text)) & CURRENCIES
-        if words:
-            currency = sorted(words)[0] if len(words) == 1 else currency or sorted(words)[0]
+        currency = _detect_currency(text)
 
         dt = None
         for line in lines:

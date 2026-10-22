@@ -19,7 +19,8 @@ _AMT = re.compile(r"-?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?|-?\(?\d+\.\d{2}\)?")
 _REF = re.compile(r"\b(?:[A-Za-z]{2,6}[-/]?\d{3,}|\d{5,})\b")
 _DATE_TXT = re.compile(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b"
                        r"|\b\d{1,2}(?:st|nd|rd|th)?[\s\-]+[A-Za-z]{3,9}\.?,?[\s\-]+\d{4}\b|\b[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b")
-_NOISE = re.compile(r"\b(payment|transfer|trf|ft|debit|credit|dr|cr|chq|cheque|pos|ach|wire|bill|paid|to|from|ref|no)\b", re.I)
+_NOISE = re.compile(r"\b(payment|transfer|trf|ft|debit|credit|dr|cr|chq|cheque|pos|ach|wire|bill|paid|to|from|ref|no|direct|deposit|dd|standing|order|inward|outward|incoming|outgoing|remittance)\b", re.I)
+_BALANCE_LINE = re.compile(r"\b(opening|closing|brought\s+forward|carried\s+forward|b/f|c/f|available)\b.*\bbalance\b|\bbalance\s+(b/f|c/f|brought|carried)|^\s*(total|totals)\b", re.I)
 
 
 class RowReader(Protocol):
@@ -45,7 +46,7 @@ class HeuristicRowReader:
         for line in lines:
             dates = find_dates(line, dayfirst)
             amts = _AMT.findall(line)
-            if not dates or not amts:
+            if not dates or not amts or _BALANCE_LINE.search(line):
                 continue
             raw = amts[-2] if (has_balance and len(amts) >= 2) else amts[-1]
             amount = parse_money(raw)

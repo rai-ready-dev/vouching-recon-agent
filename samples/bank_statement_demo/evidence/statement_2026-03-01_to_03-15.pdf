@@ -1,0 +1,55 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1632 >>
+stream
+BT /F1 10 Tf 40 800 Td 15 TL
+(FIRST DEMO BANK PJSC) Tj T*
+(ACCOUNT STATEMENT) Tj T*
+(Customer: Contoso Ltd) Tj T*
+(Account number: AE07 0331 2345 6789 0123 456) Tj T*
+(Currency: USD) Tj T*
+(Statement period: 01 Mar 2026 to 15 Mar 2026) Tj T*
+(Opening balance 01 Mar 2026     50,000.00) Tj T*
+() Tj T*
+(Date          Description                                          Debit            Credit            Balance) Tj T*
+(02 Mar 2026   PAYMENT ACME SUPPLIES LTD CHQ-1041                 1,250.00                     48,750.00) Tj T*
+(03 Mar 2026   TRANSFER GLOBEX INDUSTRIAL LLC TRF-2203            3,400.00                     45,350.00) Tj T*
+(04 Mar 2026   DEPOSIT WAYNE ENTERPRISES RCT-3301                                8,000.00      53,350.00) Tj T*
+(05 Mar 2026   PAYMENT INITECH OFFICE CO CHQ-1042                   780.50                     52,569.50) Tj T*
+(06 Mar 2026   DIRECT DEBIT UTILITY BOARD DD-7781                   412.30                     52,157.20) Tj T*
+(09 Mar 2026   TRANSFER PAYROLL MARCH PAY-0326                   21,500.00                     30,657.20) Tj T*
+(10 Mar 2026   PAYMENT UMBRELLA TRADING FZE CHQ-1043              4,050.00                     26,607.20) Tj T*
+(11 Mar 2026   TRANSFER HOOLI SERVICES TRF-2204                   2,300.00                     24,307.20) Tj T*
+(12 Mar 2026   PAYMENT STARK INDUSTRIES CHQ-1044                  1,980.00                     22,327.20) Tj T*
+(15 Mar 2026   BANK CHARGES MARCH                                    25.00                     22,302.20) Tj T*
+() Tj T*
+(Closing balance 15 Mar 2026     22,302.20) Tj T*
+(End of statement part 1) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001925 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1995
+%%EOF

@@ -11,15 +11,20 @@ from pathlib import Path
 PERIOD = (date(2026, 1, 1), date(2026, 3, 31))
 
 
-def make_pdf(lines: list[str]) -> bytes:
-    """Minimal single-page text PDF (no external library)."""
-    esc = lambda s: s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-    content = "BT /F1 11 Tf 50 780 Td 14 TL\n" + "".join(f"({esc(l)}) Tj T*\n" for l in lines) + "ET"
-    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Contents 4 0 R "
-            "/Resources << /Font << /F1 5 0 R >> >> >>",
-            f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+def make_pdf(lines: list[str], per_page: int = 46) -> bytes:
+    """Minimal text PDF (no external library); long listings continue on further pages."""
+    esc = lambda x: x.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    pages = [lines[i:i + per_page] for i in range(0, max(len(lines), 1), per_page)]
+    n = len(pages)
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [" + " ".join(f"{3 + 2 * i} 0 R" for i in range(n)) + f"] /Count {n} >>"]
+    font_id = 3 + 2 * n
+    for i, chunk in enumerate(pages):
+        content = "BT /F1 10 Tf 40 800 Td 15 TL\n" + "".join(f"({esc(l)}) Tj T*\n" for l in chunk) + "ET"
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Contents {4 + 2 * i} 0 R "
+                    f"/Resources << /Font << /F1 {font_id} 0 R >> >> >>")
+        objs.append(f"<< /Length {len(content)} >>\nstream\n{content}\nendstream")
+    objs.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     out, offs = b"%PDF-1.4\n", []
     for i, o in enumerate(objs, 1):
         offs.append(len(out))
