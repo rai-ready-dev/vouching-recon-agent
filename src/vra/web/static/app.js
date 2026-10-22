@@ -1009,6 +1009,20 @@ async function viewSettings() {
     result.textContent = r.ok ? `✓ Connected to ${r.deployment} in ${r.seconds}s${r.tokens ? ` (${r.tokens.in}+${r.tokens.out} tokens)` : ''}. The model replied: ${r.reply}` : `✗ ${r.error}`;
     result.style.color = r.ok ? 'var(--ok)' : 'var(--danger)';
     if (!r.ok && r.detail) result.append(h('div', { class: 'muted' }, r.detail));
+    if (!r.ok) result.append(h('div', { style: 'margin-top:8px' }, h('button', { class: 'btn', onclick: (e) => probeStyles(e.currentTarget) }, 'Try other address styles')));
+  });
+  const probeOut = h('div', { style: 'margin-top:10px' });
+  const probeStyles = (btn) => guard(btn, async () => {
+    clear(probeOut).append(h('div', { class: 'muted' }, h('span', { class: 'spin' }), ' Trying the likely address styles with your saved key (up to a minute)…'));
+    const r = await api('/api/system/foundry/probe', { method: 'POST', json: { endpoint: F.endpoint.value, base_url: F.base.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value } });
+    clear(probeOut).append(h('table', null, h('tbody', null, r.results.map((x) => h('tr', null,
+      h('td', { class: 'nowrap', style: x.ok ? 'color:var(--ok)' : 'color:var(--danger)' }, x.ok ? '✓ works' : '✗ ' + (x.status || 'failed')),
+      h('td', null, x.label, !x.ok ? h('div', { class: 'small muted' }, x.error) : null),
+      h('td', { class: 'right' }, x.ok ? h('button', { class: 'btn primary sm', onclick: (e) => guard(e.currentTarget, async () => {
+        await api('/api/system/foundry', { method: 'POST', json: x.base_url ? { base_url: x.base_url } : { endpoint: x.endpoint, clear_base_url: true } });
+        toast('Saved this address style', 'ok'); viewSettings();
+      }) }, 'Use this') : null))))),
+      r.results.some((x) => x.ok) ? null : h('p', { class: 'muted small' }, 'None worked with this key. The usual causes now: the key is for a different resource than this address, key sign-in is disabled (use az login), or the deployment name is wrong.'));
   });
   const save = (btn) => guard(btn, async () => {
     const r = await api('/api/system/foundry', { method: 'POST', json: { endpoint: F.endpoint.value, base_url: F.base.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value, price_in_per_m: F.pin.value, price_out_per_m: F.pout.value } });
@@ -1028,7 +1042,7 @@ async function viewSettings() {
           h('button', { class: 'btn', onclick: (e) => test(e.currentTarget) }, 'Test connection'),
           cfg.key_set ? h('button', { class: 'btn', onclick: (e) => guard(e.currentTarget, async () => { await api('/api/system/foundry', { method: 'POST', json: { clear_key: true } }); toast('Key removed', 'ok'); viewSettings(); }) }, 'Remove saved key') : null,
           h('button', { class: 'btn danger', onclick: (e) => guard(e.currentTarget, async () => { if (!confirm('Remove all saved Foundry settings from this server?')) return; await api('/api/system/foundry', { method: 'DELETE' }); await route(); }) }, 'Remove all')),
-        result,
+        result, probeOut,
         h('p', { class: 'muted small' }, 'The key is stored in plain text in a file only the server account can read (foundry.env in the data folder). If your firm requires it, leave the key blank and use Microsoft Entra ID sign-in instead (run "az login" on the server). Documents sent to an AI model leave this server for your Foundry tenant: confirm that is approved for client data.')]
         : h('p', { class: 'muted' }, 'Only an administrator can change the connection.')),
     h('div', { class: 'card' }, h('h2', null, 'About'), h('table', null, h('tbody', null,

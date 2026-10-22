@@ -102,6 +102,7 @@ class FoundryBody(BaseModel):
     price_in_per_m: str = ""
     price_out_per_m: str = ""
     clear_key: bool = False
+    clear_base_url: bool = False
 
 
 class SourceSettingsBody(BaseModel):
@@ -306,11 +307,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/system/foundry", **api)
     def save_foundry(body: FoundryBody, user: dict = Depends(admin)):
         try:
-            foundry_settings.save(settings, body.model_dump(exclude={"clear_key"}), body.clear_key)
+            foundry_settings.save(settings, body.model_dump(exclude={"clear_key", "clear_base_url"}), body.clear_key, body.clear_base_url)
         except ValueError as e:
             raise ApiError(400, str(e))
         svc.log(user, "foundry_settings_saved", "deployment=" + (body.deployment or foundry_settings.current()["deployment"]))
         return foundry_settings.current() | {"configured": foundry_configured()}
+
+    @app.post("/api/system/foundry/probe", **api)
+    def probe_foundry(body: FoundryBody, _: dict = Depends(admin)):
+        results = foundry_settings.probe(body.model_dump())
+        if not results:
+            raise ApiError(400, "Enter the endpoint (or base URL) first.")
+        return {"results": results}
 
     @app.delete("/api/system/foundry", **api)
     def delete_foundry(user: dict = Depends(admin)):

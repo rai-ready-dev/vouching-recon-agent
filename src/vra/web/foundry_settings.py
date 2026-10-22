@@ -75,7 +75,7 @@ def validate(values: dict) -> dict:
     return out
 
 
-def save(settings: Settings, values: dict, clear_key: bool = False) -> None:
+def save(settings: Settings, values: dict, clear_key: bool = False, clear_base_url: bool = False) -> None:
     new = validate(values)
     p = path(settings)
     existing = parse_env(p.read_text(encoding="utf-8-sig")) if p.is_file() else {}
@@ -83,6 +83,9 @@ def save(settings: Settings, values: dict, clear_key: bool = False) -> None:
     if clear_key:
         existing.pop("AZURE_OPENAI_API_KEY", None)
         os.environ.pop("AZURE_OPENAI_API_KEY", None)
+    if clear_base_url and "AZURE_OPENAI_BASE_URL" not in new:
+        existing.pop("AZURE_OPENAI_BASE_URL", None)
+        os.environ.pop("AZURE_OPENAI_BASE_URL", None)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("# Written by the Settings page. Contains a secret: do not share or commit this file.\n"
                  + "".join(f"{k}={v}\n" for k, v in existing.items() if k in KEYS), encoding="utf-8")
@@ -91,6 +94,47 @@ def save(settings: Settings, values: dict, clear_key: bool = False) -> None:
     except OSError:
         pass
     os.environ.update({k: v for k, v in new.items()})
+
+
+def candidate_styles(endpoint: str, base_url: str) -> list[dict]:
+    """Address styles worth trying for a resource: classic and OpenAI-compatible (v1), on each host a Foundry/Azure
+    OpenAI resource answers on."""
+    src = urlparse(endpoint or base_url or "")
+    if not src.netloc:
+        return []
+    resource = src.netloc.split(".")[0]
+    styles: list[dict] = []
+    for host in dict.fromkeys([src.netloc, f"{resource}.openai.azure.com", f"{resource}.cognitiveservices.azure.com",
+                               f"{resource}.services.ai.azure.com"]):
+        origin = f"https://{host}"
+        styles.append({"label": f"Classic Azure OpenAI at {host}", "endpoint": origin, "base_url": ""})
+        styles.append({"label": f"OpenAI-compatible (v1) at {host}", "endpoint": "", "base_url": f"{origin}/openai/v1/"})
+    return styles
+
+
+def probe(values: dict, make=None, per_try_seconds: float = 20.0, styles: list[dict] | None = None) -> list[dict]:
+    """Try each address style with the given (or saved) key and report which one answers."""
+    if make is None:
+        from ..llm import FoundryChat as make  # noqa: N813
+    cur = current()
+    endpoint = (values.get("endpoint") or cur["endpoint"] or "").strip()
+    base = (values.get("base_url") or cur["base_url"] or "").strip()
+    dep = (values.get("deployment") or cur["deployment"] or "").strip()
+    key = (values.get("api_key") or "").strip() or os.environ.get("AZURE_OPENAI_API_KEY") or None
+    ver = (values.get("api_version") or cur["api_version"] or "").strip() or None
+    results = []
+    for s in (styles if styles is not None else candidate_styles(endpoint, base))[:8]:
+        row = {**s, "ok": False, "status": None, "error": ""}
+        try:
+            chat = make(deployment=dep, endpoint=s["endpoint"], base_url=s["base_url"], api_key=key, api_version=ver, timeout=per_try_seconds)
+            reply = chat.chat("Reply with the single word OK.", "ping")
+            row.update(ok=True, reply=str(reply)[:40])
+        except Exception as e:  # each failure is information
+            row.update(status=getattr(e, "status_code", None), error=f"{type(e).__name__}: {str(e)[:160]}")
+        results.append(row)
+        if row["ok"]:
+            break  # the first style that works is the one to use
+    return results
 
 
 def clear(settings: Settings) -> None:

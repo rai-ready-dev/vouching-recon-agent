@@ -33,15 +33,24 @@ class ChatClient(Protocol):
 
 
 class FoundryChat:  # pragma: no cover - needs network and credentials
+    """Chat client for a model deployed in Microsoft Foundry / Azure OpenAI.
+
+    Two address styles are supported: the classic Azure OpenAI one (`endpoint`) and the OpenAI-compatible "v1" one
+    (`base_url`, usually ending in /openai/v1/). When either is passed explicitly, the environment is not consulted
+    for the other, so alternatives can be tried side by side.
+    """
+
     def __init__(self, deployment: str | None = None, endpoint: str | None = None,
                  api_key: str | None = None, api_version: str | None = None,
-                 base_url: str | None = None) -> None:
+                 base_url: str | None = None, timeout: float = 120.0) -> None:
         self._deployment = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT") or os.environ.get("VRA_MODEL")
         if not self._deployment:
             raise RuntimeError("set AZURE_OPENAI_DEPLOYMENT to your Foundry deployment name")
         key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-        base_url = base_url or os.environ.get("AZURE_OPENAI_BASE_URL")
-        endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        if endpoint is not None or base_url is not None:  # explicit style: do not mix in the other one from the environment
+            endpoint, base_url = endpoint or None, base_url or None
+        else:
+            base_url, endpoint = os.environ.get("AZURE_OPENAI_BASE_URL") or None, os.environ.get("AZURE_OPENAI_ENDPOINT") or None
         token_provider = None
         if not key:
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -51,15 +60,18 @@ class FoundryChat:  # pragma: no cover - needs network and credentials
         if base_url:
             from openai import OpenAI
 
-            self._client = OpenAI(base_url=base_url, api_key=key or token_provider())
+            self._client = OpenAI(base_url=base_url, api_key=key or token_provider(), timeout=timeout,
+                                  default_headers={"api-key": key} if key else None)
+            self.style = "v1"
         else:
             if not endpoint:
                 raise RuntimeError("set AZURE_OPENAI_ENDPOINT (or AZURE_OPENAI_BASE_URL)")
             from openai import AzureOpenAI
 
             self._client = AzureOpenAI(
-                azure_endpoint=endpoint, api_key=key, azure_ad_token_provider=token_provider,
+                azure_endpoint=endpoint, api_key=key, azure_ad_token_provider=token_provider, timeout=timeout,
                 api_version=api_version or os.environ.get("AZURE_OPENAI_API_VERSION") or DEFAULT_API_VERSION)
+            self.style = "classic"
         self.name = f"foundry:{self._deployment}"
         self._json_ok = True
         self._local = threading.local()

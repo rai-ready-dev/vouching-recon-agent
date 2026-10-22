@@ -82,6 +82,14 @@ Every run keeps an exact snapshot of the files it used. **Back up the whole `vra
 * This is a single-server pilot design. Before wider rollout: Entra ID sign-in, Postgres, central backup, and an
   access review with your IT/security team.
 
+## If Test connection fails
+The red message names the likely cause and the grey line shows exactly what was tried (never the key). For a 401 or
+404, click **Try other address styles**: the app tries the classic Azure OpenAI address and the OpenAI-compatible
+(`/openai/v1/`) address on each host a resource answers on (`.openai.azure.com`, `.cognitiveservices.azure.com`,
+`.services.ai.azure.com`) with your saved key, shows which one works, and **Use this** saves it. A Foundry resource
+(address ending `services.ai.azure.com`) often needs the `/openai/v1/` style. If none works, the key belongs to a
+different resource, key sign-in is disabled (use `az login`), or the deployment name is wrong.
+
 ## Languages and scripts
 Text is handled as UTF-8 everywhere, company names in any script (Arabic, Chinese, Cyrillic, ...) are matched, and
 Arabic-Indic digits and separators (٠١٢٣ ٫ ٬) are read as numbers. The built-in reader recognises English labels

@@ -16,7 +16,7 @@ anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.40"]
 foundry = ["openai>=1.40", "azure-identity>=1.17"]
 scan = ["pypdfium2>=4.30"]
-dev = ["pytest>=8.0", "rapidfuzz>=3.0", "httpx>=0.27"]
+dev = ["pytest>=8.0", "rapidfuzz>=3.0", "httpx>=0.27", "openai>=1.40"]
 
 [project.scripts]
 vra = "vra.cli:main"

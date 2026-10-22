@@ -554,3 +554,37 @@ def test_failed_connection_test_shows_what_was_tried_without_the_key(web, monkey
     r = c.post("/api/system/test-foundry").json()
     assert r["ok"] is False and "deployment 'gpt-prod'" in r["detail"] and "ending …WXYZ" in r["detail"] and "S" * 28 not in str(r)
     assert "/openai/v1/" in r["error"]
+
+
+def test_try_other_address_styles_finds_the_one_that_works_and_saves_it(web, monkeypatch):
+    app, c = web
+    c.post("/api/system/foundry", json={"endpoint": "https://res.services.ai.azure.com", "deployment": "gpt-prod", "api_key": "k" * 28 + "WXYZ"})
+    import vra.llm
+
+    class OnlyV1(FakeFoundry):
+        def __init__(self, deployment=None, endpoint=None, base_url=None, api_key=None, api_version=None, timeout=None):
+            super().__init__()
+            explicit = endpoint is not None or base_url is not None                        # same rule as the real client
+            self.base_url = (base_url or None) if explicit else (os.environ.get("AZURE_OPENAI_BASE_URL") or None)
+
+        def chat(self, system, user, images=(), json_mode=False):
+            if not self.base_url:
+                e = RuntimeError("Access denied due to invalid subscription key or wrong API endpoint")
+                e.status_code = 401
+                raise e
+            return "OK"
+
+    monkeypatch.setattr(vra.llm, "FoundryChat", OnlyV1)
+    res = c.post("/api/system/foundry/probe", json={}).json()["results"]
+    assert [r["ok"] for r in res] == [False, True] and res[0]["status"] == 401                  # classic fails, v1 works, probing stops
+    chosen = res[1]
+    assert chosen["base_url"] == "https://res.services.ai.azure.com/openai/v1/"
+    saved = c.post("/api/system/foundry", json={"base_url": chosen["base_url"]}).json()
+    assert saved["base_url"] == chosen["base_url"] and saved["key_set"] is True and saved["key_hint"] == "…WXYZ"
+    assert c.post("/api/system/test-foundry").json()["ok"] is True                              # the saved style is what the test now uses
+    back = c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com", "clear_base_url": True}).json()
+    assert back["base_url"] == "" and back["endpoint"] == "https://res.openai.azure.com"
+    rev = login_as(app, "rita", "reviewer")
+    assert rev.post("/api/system/foundry/probe", json={}).status_code == 403
+    assert c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com"}).status_code == 200
+    assert "AZURE_OPENAI_BASE_URL" not in (Path(app.state.settings.data_dir) / "foundry.env").read_text(encoding="utf-8")
