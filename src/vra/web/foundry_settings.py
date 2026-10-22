@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from ..envfile import load_env_file, parse_env
 from .config import Settings
 
-KEYS = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION",
+KEYS = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION",
         "VRA_PRICE_IN_PER_M", "VRA_PRICE_OUT_PER_M")
 
 
@@ -26,7 +26,9 @@ def load(settings: Settings) -> None:
 def current() -> dict:
     """Non-secret view of the live configuration."""
     key = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
-    return {"endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT", ""), "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT", ""),
+    raw_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+    return {"endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT", ""), "base_url": os.environ.get("AZURE_OPENAI_BASE_URL", ""),
+            "key_hint": ("…" + raw_key[-4:]) if len(raw_key) >= 12 else "", "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT", ""),
             "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", ""), "key_set": key,
             "auth": "API key" if key else "Microsoft Entra ID (az login)",
             "price_in_per_m": os.environ.get("VRA_PRICE_IN_PER_M", ""), "price_out_per_m": os.environ.get("VRA_PRICE_OUT_PER_M", "")}
@@ -40,6 +42,12 @@ def validate(values: dict) -> dict:
         if u.scheme != "https" or not u.netloc:
             raise ValueError("The endpoint must start with https:// and look like https://<resource>.openai.azure.com")
         out["AZURE_OPENAI_ENDPOINT"] = f"{u.scheme}://{u.netloc}"  # a pasted Target URI or project URL: keep the resource address only
+    base = (values.get("base_url") or "").strip()
+    if base:
+        bu = urlparse(base)
+        if bu.scheme != "https" or not bu.netloc:
+            raise ValueError("The OpenAI-compatible base URL must start with https:// and usually ends with /openai/v1/")
+        out["AZURE_OPENAI_BASE_URL"] = base if base.endswith("/") else base + "/"
     dep = (values.get("deployment") or "").strip().strip("\"'")
     if dep:
         if not re.fullmatch(r"[A-Za-z0-9._\-]{1,64}", dep):

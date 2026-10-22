@@ -519,3 +519,38 @@ def test_pasted_target_uri_and_quoted_key_are_cleaned_up(tmp_path):
 
     assert "SAME resource" in foundry_hint(E("Access denied due to invalid subscription key"))
     assert "Entra ID" in foundry_hint(E("Key based authentication is disabled for this resource")) and "az login" in foundry_hint(E("Key based authentication is disabled"))
+
+
+def test_base_url_style_and_key_hint(tmp_path):
+    from vra.web.foundry_settings import current, validate
+
+    assert validate({"base_url": "https://res.services.ai.azure.com/openai/v1"})["AZURE_OPENAI_BASE_URL"] == "https://res.services.ai.azure.com/openai/v1/"
+    with pytest.raises(ValueError):
+        validate({"base_url": "http://insecure/openai/v1/"})
+    saved = {k: os.environ.get(k) for k in ENV}
+    try:
+        os.environ["AZURE_OPENAI_API_KEY"] = "abcdefgh12345678WXYZ"
+        c = current()
+        assert c["key_hint"] == "…WXYZ" and "abcdefgh" not in json.dumps(c)       # only the last four characters, to compare keys
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
+def test_failed_connection_test_shows_what_was_tried_without_the_key(web, monkeypatch):
+    app, c = web
+    c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com", "deployment": "gpt-prod", "api_key": "S" * 28 + "WXYZ"})
+    import vra.llm
+
+    class Bad(FakeFoundry):
+        def chat(self, *a, **k):
+            e = RuntimeError("Access denied due to invalid subscription key")
+            e.status_code = 401
+            raise e
+
+    monkeypatch.setattr(vra.llm, "FoundryChat", Bad)
+    r = c.post("/api/system/test-foundry").json()
+    assert r["ok"] is False and "deployment 'gpt-prod'" in r["detail"] and "ending …WXYZ" in r["detail"] and "S" * 28 not in str(r)
+    assert "/openai/v1/" in r["error"]

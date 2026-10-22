@@ -95,6 +95,7 @@ class VoucherOverride(BaseModel):
 
 class FoundryBody(BaseModel):
     endpoint: str = ""
+    base_url: str = ""
     deployment: str = ""
     api_key: str = ""
     api_version: str = ""
@@ -126,7 +127,9 @@ def foundry_hint(exc: Exception) -> str:
                 "run `az login` on this computer, and make sure you have the 'Cognitive Services OpenAI User' role on the resource.")
     if status == 401 or "authenticat" in low or "invalid api key" in low or "incorrect api key" in low:
         return ("The key or sign-in was rejected (401). Check that the key and the endpoint come from the SAME resource, that the key was "
-                "copied completely (and not regenerated since), or leave the key empty and run `az login` if you use Microsoft Entra ID.")
+                "copied completely (and not regenerated since), or leave the key empty and run `az login` if you use Microsoft Entra ID. "
+                "If another app works with this key, copy that app's endpoint address exactly; if it uses an address ending in /openai/v1/, "
+                "enter that in the OpenAI-compatible base URL box.")
     if status == 403 or "permission" in low:
         return "Access was denied (403). Your key or account lacks permission on this resource (for Entra ID, ask IT for the 'Cognitive Services OpenAI User' role)."
     if status == 404 or "deploymentnotfound" in low or "does not exist" in low:
@@ -290,7 +293,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"ok": True, "deployment": chat.name, "reply": reply[:80], "seconds": round(time.time() - t0, 2),
                     "tokens": {"in": usage[0], "out": usage[1]} if usage else None}
         except Exception as e:
-            return JSONResponse({"ok": False, "error": foundry_hint(e), "detail": f"{type(e).__name__}: {str(e)[:300]}"}, status_code=200)
+            cur = foundry_settings.current()
+            how = (f"OpenAI-compatible base URL {cur['base_url']}" if cur["base_url"] else f"Azure OpenAI endpoint {cur['endpoint']}")
+            using = f"Tried: {how}; deployment '{cur['deployment']}'; " + (f"API key ending {cur['key_hint']}" if cur["key_hint"] else cur["auth"]) \
+                    + (f"; API version {cur['api_version']}" if cur["api_version"] else "")
+            return JSONResponse({"ok": False, "error": foundry_hint(e), "detail": f"{type(e).__name__}: {str(e)[:300]}. {using}"}, status_code=200)
 
     @app.get("/api/system/foundry")
     def get_foundry(_: dict = Depends(admin)):

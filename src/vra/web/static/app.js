@@ -996,8 +996,9 @@ async function viewSettings() {
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nw = h('input', { type: 'password', autocomplete: 'new-password' });
   const F = cfg ? {
     endpoint: h('input', { value: cfg.endpoint, placeholder: 'https://<your-resource>.openai.azure.com' }),
+    base: h('input', { value: cfg.base_url, placeholder: 'optional: …/openai/v1/ (use this if another app of yours uses that style)' }),
     deployment: h('input', { value: cfg.deployment, placeholder: 'the deployment name you gave the model in Foundry' }),
-    key: h('input', { type: 'password', autocomplete: 'off', placeholder: cfg.key_set ? '•••••••• saved (leave blank to keep)' : 'leave blank to sign in with your work account (az login)' }),
+    key: h('input', { type: 'password', autocomplete: 'off', placeholder: cfg.key_set ? `saved, ending ${cfg.key_hint || '••••'} (leave blank to keep)` : 'leave blank to sign in with your work account (az login)' }),
     ver: h('input', { value: cfg.api_version, placeholder: 'optional, e.g. 2024-10-21' }),
     pin: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_in_per_m, placeholder: 'USD per 1M input tokens' }),
     pout: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_out_per_m, placeholder: 'USD per 1M output tokens' }),
@@ -1010,7 +1011,7 @@ async function viewSettings() {
     if (!r.ok && r.detail) result.append(h('div', { class: 'muted' }, r.detail));
   });
   const save = (btn) => guard(btn, async () => {
-    const r = await api('/api/system/foundry', { method: 'POST', json: { endpoint: F.endpoint.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value, price_in_per_m: F.pin.value, price_out_per_m: F.pout.value } });
+    const r = await api('/api/system/foundry', { method: 'POST', json: { endpoint: F.endpoint.value, base_url: F.base.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value, price_in_per_m: F.pin.value, price_out_per_m: F.pout.value } });
     state.system.foundry_configured = r.configured; toast('Saved. The AI options are now available.', 'ok'); viewSettings();
   });
   shell('settings', h('h1', null, 'Settings'),
@@ -1019,6 +1020,7 @@ async function viewSettings() {
       admin ? [
         h('p', { class: 'muted' }, 'Find these in the Azure portal (your Azure OpenAI / Foundry resource → Keys and Endpoint) and in Foundry under Deployments. They are stored in the data folder of this server, never shown again, and used immediately: no restart needed.'),
         h('div', { class: 'grid2' }, h('div', null, h('label', null, 'Endpoint'), F.endpoint), h('div', null, h('label', null, 'Deployment name'), F.deployment),
+          h('div', { style: 'grid-column:1/-1' }, h('label', null, 'OpenAI-compatible base URL (optional, replaces the endpoint above when set)'), F.base),
           h('div', null, h('label', null, `API key (${cfg.auth})`), F.key), h('div', null, h('label', null, 'API version (optional)'), F.ver),
           h('div', null, h('label', null, 'Price per 1M input tokens (optional, for cost estimates)'), F.pin), h('div', null, h('label', null, 'Price per 1M output tokens (optional)'), F.pout)),
         h('div', { class: 'row', style: 'margin-top:14px' },
