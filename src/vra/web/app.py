@@ -121,8 +121,12 @@ def foundry_hint(exc: Exception) -> str:
     """Turn a raw SDK error into something a person can act on."""
     name, status, text = type(exc).__name__, getattr(exc, "status_code", None), str(exc)
     low = text.lower()
+    if "disabled" in low and ("key" in low or "local auth" in low or "authentication" in low):
+        return ("Key-based sign-in is switched off on this resource (your organisation requires Microsoft Entra ID). Remove the key here, "
+                "run `az login` on this computer, and make sure you have the 'Cognitive Services OpenAI User' role on the resource.")
     if status == 401 or "authenticat" in low or "invalid api key" in low or "incorrect api key" in low:
-        return "The key or sign-in was rejected (401). Check the API key, or run `az login` if you are using Microsoft Entra ID."
+        return ("The key or sign-in was rejected (401). Check that the key and the endpoint come from the SAME resource, that the key was "
+                "copied completely (and not regenerated since), or leave the key empty and run `az login` if you use Microsoft Entra ID.")
     if status == 403 or "permission" in low:
         return "Access was denied (403). Your key or account lacks permission on this resource (for Entra ID, ask IT for the 'Cognitive Services OpenAI User' role)."
     if status == 404 or "deploymentnotfound" in low or "does not exist" in low:

@@ -39,8 +39,8 @@ def validate(values: dict) -> dict:
         u = urlparse(ep)
         if u.scheme != "https" or not u.netloc:
             raise ValueError("The endpoint must start with https:// and look like https://<resource>.openai.azure.com")
-        out["AZURE_OPENAI_ENDPOINT"] = ep.rstrip("/")
-    dep = (values.get("deployment") or "").strip()
+        out["AZURE_OPENAI_ENDPOINT"] = f"{u.scheme}://{u.netloc}"  # a pasted Target URI or project URL: keep the resource address only
+    dep = (values.get("deployment") or "").strip().strip("\"'")
     if dep:
         if not re.fullmatch(r"[A-Za-z0-9._\-]{1,64}", dep):
             raise ValueError("The deployment name may only contain letters, digits, '.', '_' and '-'.")
@@ -50,7 +50,7 @@ def validate(values: dict) -> dict:
         if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?", ver):
             raise ValueError("The API version looks like 2024-10-21.")
         out["AZURE_OPENAI_API_VERSION"] = ver
-    key = (values.get("api_key") or "").strip()
+    key = (values.get("api_key") or "").strip().strip("\"'").strip()
     if key:
         if re.search(r"\s", key) or len(key) < 16:
             raise ValueError("That does not look like an API key (too short or contains spaces).")

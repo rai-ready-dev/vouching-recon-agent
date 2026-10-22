@@ -284,7 +284,7 @@ def test_connection_test_reports_latency_tokens_and_actionable_errors(web, monke
 
     monkeypatch.setattr(vra.llm, "FoundryChat", Bad)
     r = c.post("/api/system/test-foundry").json()
-    assert r["ok"] is False and "401" in r["error"] and "API key" in r["error"]
+    assert r["ok"] is False and "401" in r["error"] and "SAME resource" in r["error"] and "az login" in r["error"]
 
     class Missing(FakeFoundry):
         def chat(self, *a, **k):
@@ -501,3 +501,21 @@ def test_non_latin_names_survive_the_whole_pipeline(web):
     assert "Transaction:R2" in {i["txn_id"] for i in c.get(f"/api/runs/{rid}/items", params={"q": "النور"}).json()["items"]}
     assert "شركة" in c.get(f"/api/runs/{rid}/document", params={"name": "نور.txt"}).content.decode("utf-8")
     assert c.get(f"/api/runs/{rid}/document-text", params={"name": "نور.txt"}).json()["text"].startswith("شركة")
+
+
+def test_pasted_target_uri_and_quoted_key_are_cleaned_up(tmp_path):
+    from vra.web.foundry_settings import validate
+    from vra.web.app import foundry_hint
+
+    v = validate({"endpoint": "https://res.openai.azure.com/openai/deployments/gpt-prod/chat/completions?api-version=2024-10-21",
+                  "api_key": '  "' + "k" * 32 + '" ', "deployment": " 'gpt-prod' "})
+    assert v["AZURE_OPENAI_ENDPOINT"] == "https://res.openai.azure.com" and v["AZURE_OPENAI_API_KEY"] == "k" * 32
+    assert v["AZURE_OPENAI_DEPLOYMENT"] == "gpt-prod"
+    proj = validate({"endpoint": "https://res.services.ai.azure.com/api/projects/my-project"})
+    assert proj["AZURE_OPENAI_ENDPOINT"] == "https://res.services.ai.azure.com"
+
+    class E(Exception):
+        status_code = 401
+
+    assert "SAME resource" in foundry_hint(E("Access denied due to invalid subscription key"))
+    assert "Entra ID" in foundry_hint(E("Key based authentication is disabled for this resource")) and "az login" in foundry_hint(E("Key based authentication is disabled"))
