@@ -397,6 +397,16 @@ def test_options_risk_signals_sampling_and_validation(web, demo):
     assert codes & {"WEEKEND_POSTING", "ROUND_AMOUNT", "JUST_BELOW_LIMIT"}
     assert "benford" in p["insights"] and p["insights"]["entries"] == 16
     assert "Population analytics" in c.get(f"/api/runs/{run['id']}/export/md").text
+    # exports carry the analytics too
+    import docx as _docx
+    wb = openpyxl.load_workbook(io.BytesIO(c.get(f"/api/runs/{run['id']}/export/xlsx").content))
+    assert "Insights" in wb.sheetnames and wb["Insights"].max_row >= 5
+    d = _docx.Document(io.BytesIO(c.get(f"/api/runs/{run['id']}/export/docx").content))
+    assert any("Population analytics" in para.text for para in d.paragraphs)
+    # signal-only items are auto-cleared, so they must not count as "flagged and awaiting a decision"
+    items = c.get(f"/api/runs/{run['id']}/items", params={"limit": 500}).json()["items"]
+    needing = [i for i in items if i["codes"] and i["disposition"] != "auto_cleared"]
+    assert p["review"]["totals"]["flagged"] == len(needing) and len(needing) < len([i for i in items if i["codes"]])
 
 
 def test_parallel_reading_gives_the_same_result_as_serial(demo):

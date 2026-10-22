@@ -83,3 +83,7 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--hov
 details > summary { cursor: pointer; font-weight: 600; } details[open] > summary { margin-bottom: 8px; }
 .kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel); }
 ul.plain { margin: 6px 0; padding-left: 18px; } .pager { display: flex; gap: 10px; align-items: center; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid var(--border); }
+
+.hbar { height: 10px; background: var(--hover); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+.hbar > i { display: block; height: 100%; background: var(--primary); } .hbar > i.ok { background: var(--ok); } .hbar > i.bad { background: var(--danger); }
+.card table th { position: static; }

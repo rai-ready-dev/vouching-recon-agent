@@ -102,6 +102,30 @@ def _run_extract(docs, extractor, ocr, out: Path) -> None:
     print(f"\nWrote {out / 'extracted.json'}")
 
 
+def _check_foundry() -> None:
+    import os
+    import time
+
+    names = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION")
+    for n in names:
+        v = os.environ.get(n, "")
+        print(f"  {n:28} {'(set, hidden)' if v and 'KEY' in n else (v or '(not set)')}")
+    if not os.environ.get("AZURE_OPENAI_API_KEY"):
+        print("  No API key: using Microsoft Entra ID sign-in (run `az login` first).")
+    try:
+        from .llm import FoundryChat
+
+        t0 = time.time()
+        chat = FoundryChat()
+        reply = chat.chat("Reply with the single word OK.", "ping")
+        usage = chat.pop_usage()
+        print(f"\nConnected to {chat.name} in {time.time() - t0:.1f}s; the model replied {reply!r}"
+              + (f" ({usage[0]}+{usage[1]} tokens)" if usage else ""))
+    except Exception as exc:
+        print(f"\nCould not connect: {type(exc).__name__}: {str(exc)[:400]}")
+        raise SystemExit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="vra", description=__doc__)
     ap.add_argument("--analyst", choices=["rule", "foundry", "anthropic", "openai"], default="rule")
@@ -130,12 +154,15 @@ def main(argv: list[str] | None = None) -> None:
     vd.add_argument("--period-end", type=date.fromisoformat)
     vd.add_argument("--programmes", help="JSON file overriding/adding vouching programmes")
     vd.add_argument("--out", default="out")
+    sub.add_parser("check-foundry", help="test the Microsoft Foundry connection and show what is configured")
     ex = sub.add_parser("extract", help="read documents only and show what was extracted (no ledger needed)")
     ex.add_argument("--docs", required=True)
     ex.add_argument("--out", default="out")
     args = ap.parse_args(argv)
 
     load_env_file(".env")
+    if args.cmd == "check-foundry":
+        return _check_foundry()
     policy = Policy.from_file(args.policy) if args.policy else Policy()
     analyst, extractor, ocr = _build_stack(args)
 

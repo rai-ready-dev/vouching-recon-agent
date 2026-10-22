@@ -24,6 +24,15 @@ A vouching programme is data: a list of assertion tests per transaction type (`p
 by JSON). New transaction types and new tests are configuration, not new workflows. The same ledger can mix
 purchases, sales, expenses, payroll and assets.
 
+## What makes the agent strong at vouching
+* **Evidence-grounded reading**: no value enters the analysis unless it can be found in the document.
+* **Deterministic first, AI second**: totals, matching, arithmetic, sampling and analytics are code; the model reads, explains
+  and adjudicates, and every model output is checked (verifier, grounding, candidate-only choices).
+* **Document integrity**: PDF/Office metadata (edited after creation, editing tools, author changes) raises a review item.
+* **Completeness in both directions**: entries without documents *and* documents without entries.
+* **Measured**: usage metering, guard-rail counters, reader comparison, reviewer-derived precision and answer-key scoring.
+* **Teachable**: corrections, manual links and company aliases persist and carry across re-runs.
+
 ## Trust controls already in place
 * Extracted values are grounded in document text (LLM must quote; quote and value are verified).
 * The verifier rejects fabricated evidence ids, mismatched figures, unsupported money figures, and any

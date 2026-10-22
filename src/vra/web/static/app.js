@@ -19,6 +19,8 @@ const CODE_LABEL = {
   REFERENCE_MISMATCH: 'Reference differs', CURRENCY_MISMATCH: 'Currency differs', CUTOFF_ISSUE: 'Cut-off',
   DATE_MISMATCH: 'Date issue', VOUCHER_REUSED: 'Document reused', MISSING_APPROVAL: 'No approval',
   LOW_CONFIDENCE_EXTRACTION: 'Hard to read', FIELD_MISSING: 'Field missing', WRONG_DOC_TYPE: 'Wrong document type',
+  DOC_ARITHMETIC: "Document doesn't add up", DOC_TAMPER_SUSPECTED: 'Possible alteration', AI_SUGGESTED_LINK: 'AI-suggested link',
+  JUST_BELOW_LIMIT: 'Just below limit', WEEKEND_POSTING: 'Weekend posting', ROUND_AMOUNT: 'Round amount',
 };
 
 /* ---------- tiny DOM helper ---------- */
@@ -212,7 +214,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- engagement page ---------- */
-const TABS = [['setup', 'Files & run'], ['results', 'Results'], ['documents', 'Documents'], ['workpaper', 'Workpaper & sign-off'], ['activity', 'Activity']];
+const TABS = [['setup', 'Files & run'], ['results', 'Results'], ['documents', 'Documents'], ['performance', 'Performance'], ['workpaper', 'Workpaper & sign-off'], ['activity', 'Activity']];
 
 async function viewEngagement(eid, tab, rid, q) {
   const data = await api('/api/engagements/' + eid);
@@ -230,7 +232,7 @@ async function viewEngagement(eid, tab, rid, q) {
       h('div', { class: 'row' }, runSel, h('button', { class: 'btn sm', onclick: () => editEngagementModal(ctx) }, 'Edit details'))),
     h('div', { class: 'tabs' }, TABS.map(([k, label]) => h('a', { href: `#/e/${eid}/${k}${ctx.rid ? '/' + ctx.rid : ''}`, class: k === tab ? 'active' : '' }, label))),
     ctx.box);
-  const renderers = { setup: renderSetup, results: renderResults, documents: renderDocuments, workpaper: renderWorkpaper, activity: renderActivity };
+  const renderers = { setup: renderSetup, results: renderResults, documents: renderDocuments, performance: renderPerformance, workpaper: renderWorkpaper, activity: renderActivity };
   await (renderers[tab] || renderSetup)(ctx);
 }
 
@@ -312,7 +314,7 @@ function renderSetup(ctx) {
     afterUpload(skipped);
   };
 
-  const ledgerInput = h('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.tsv', onchange: (e) => doUpload('ledger', [...e.target.files]) });
+  const ledgerInput = h('input', { type: 'file', multiple: true, accept: '.xlsx,.xlsm,.csv,.tsv,.pdf,.docx,.txt,.eml,.png,.jpg,.jpeg,.tif,.tiff,.bmp', onchange: (e) => doUpload('ledger', [...e.target.files]) });
   const fileInput = h('input', { type: 'file', multiple: true, style: 'display:none', onchange: (e) => doUpload('document', [...e.target.files]) });
   const folderInput = h('input', { type: 'file', webkitdirectory: true, directory: true, multiple: true, style: 'display:none', onchange: (e) => doUpload('document', [...e.target.files]) });
   const drop = h('div', { class: 'drop' }, h('div', null, h('strong', null, 'Drop documents or a whole folder here')),
@@ -336,16 +338,90 @@ function renderSetup(ctx) {
   draw();
 
   box.append(
-    h('div', { class: 'banner' }, h('strong', null, 'How it works: '), '1) upload the ledger entries you want vouched, 2) upload the supporting documents, 3) run. The agent reads every document, links it to a ledger entry and tests it. You then review only the exceptions.'),
-    h('div', { class: 'card' }, h('h2', null, '1. Ledger (Excel or CSV)'),
-      ledger.length ? h('div', { class: 'row' }, ledger.map((f) => h('span', null, h('strong', null, f.filename), h('span', { class: 'muted' }, ` · uploaded ${when(f.uploaded_at)} by ${f.uploaded_by || '?'} `), rm(f)))) : null,
-      h('p', { class: 'muted small', style: 'margin:8px 0' }, 'Needs a header row with at least Date and Amount (or Debit/Credit). Optional columns: Type, Counterparty/Vendor/Customer, Reference/Invoice No, Currency, Approver, Description. Uploading a new ledger replaces the current one.'),
-      ledgerInput),
+    h('div', { class: 'banner' }, h('strong', null, 'How it works: '), '1) upload the source of truth (the records you are vouching), 2) upload the supporting documents, 3) run. The agent reads every document, links it to an entry and tests it. You then review only the exceptions.'),
+    sourceCard(ctx, ledger, ledgerInput, rm),
     h('div', { class: 'card' }, h('h2', null, `2. Supporting documents ${docs.length ? '(' + docs.length + ')' : ''}`), drop, status,
       docs.length ? h('div', { style: 'margin-top:12px' }, h('div', { class: 'row between', style: 'margin-bottom:6px' }, filter, h('span', { class: 'muted small' }, docs.length > 300 ? 'showing first 300' : '')),
         h('div', { class: 'scroll', style: 'max-height:280px;border:1px solid var(--border);border-radius:8px' }, h('table', null, tbody))) : null),
     runCard(ctx, ledger.length > 0 && docs.length > 0),
     historyCard(ctx));
+}
+
+const FIELD_LABEL = { id: 'Entry ID (optional)', type: 'Transaction type', date: 'Date *', counterparty: 'Counterparty (vendor / customer / payee)',
+  reference: 'Reference (invoice or document no.)', amount: 'Amount *', debit: 'Debit', credit: 'Credit', currency: 'Currency',
+  account: 'Account', description: 'Description', approver: 'Approver' };
+const SPREADSHEET = /\.(xlsx|xlsm|csv|tsv)$/i;
+
+function sourceCard(ctx, files, input, rm) {
+  const saved = ctx.data.source_settings || {};
+  return h('div', { class: 'card' }, h('h2', null, '1. Source of truth'),
+    h('p', { class: 'muted small', style: 'margin-top:0' }, 'The records you are vouching: a ledger, journal, bank statement, schedule or listing. Excel or CSV with any column layout, or a PDF, Word, text, email or scan. You can add several files.'),
+    files.length ? h('div', { class: 'card flush', style: 'box-shadow:none;margin-bottom:10px' }, h('table', null, h('tbody', null, files.map((f) => h('tr', null,
+      h('td', null, h('strong', null, f.filename), saved[f.filename] ? [' ', chip('custom setup', 'plain')] : null,
+        h('div', { class: 'small muted' }, `uploaded ${when(f.uploaded_at)} by ${f.uploaded_by || '?'}`)),
+      h('td', { class: 'right nowrap' }, h('button', { class: 'btn sm', onclick: () => sourceModal(ctx, f) }, SPREADSHEET.test(f.filename) ? 'Preview & map columns' : 'How it is read'), ' ', rm(f))))))) : null,
+    h('p', { class: 'muted small', style: 'margin:8px 0' }, 'Spreadsheets are matched to columns automatically (Date and Amount, or Debit/Credit, are required). If the layout is unusual, use "Preview & map columns". From PDF, Word or text, entries are read line by line (a date, some text, an amount); use the AI reader for harder layouts.'),
+    input);
+}
+
+async function sourceModal(ctx, f) {
+  let prev;
+  try { prev = await api(`/api/engagements/${ctx.eid}/source-preview?file_id=${f.id}`); } catch (e) { return fail(e); }
+  const saved = prev.settings || {};
+  const typeSel = h('select', null, h('option', { value: '' }, `Use the engagement default (${ctx.data.engagement.default_type})`),
+    TYPES.map((t) => h('option', { value: t, selected: saved.default_type === t }, t.replace('_', ' '))));
+  const clearAll = h('button', { class: 'btn danger', style: 'margin-right:auto', onclick: async () => {
+    await api(`/api/engagements/${ctx.eid}/source-settings`, { method: 'PUT', json: { filename: f.filename, settings: {} } });
+    closeModal(); toast('Back to automatic', 'ok'); ctx.reload();
+  } }, 'Reset to automatic');
+  if (prev.kind === 'document') {
+    return modal('How ' + f.filename + ' is read', h('div', null, h('p', null, prev.note),
+      h('label', null, 'Transaction type for these entries'), typeSel),
+      async () => {
+        await api(`/api/engagements/${ctx.eid}/source-settings`, { method: 'PUT', json: { filename: f.filename, settings: typeSel.value ? { default_type: typeSel.value } : {} } });
+        closeModal(); ctx.reload();
+      }, 'Save', saved && Object.keys(saved).length ? clearAll : null);
+  }
+  let si = Math.max(0, prev.sheets.findIndex((s) => s.name === saved.sheet));
+  const wrap = h('div');
+  const headerRow = h('input', { type: 'number', min: 1, style: 'width:90px', value: saved.header_row || (prev.sheets[si] && prev.sheets[si].header_row) || 1 });
+  const sheetSel = prev.sheets.length > 1 ? h('select', { onchange: (e) => { si = +e.target.value; headerRow.value = prev.sheets[si].header_row; draw(); } },
+    prev.sheets.map((s, i) => h('option', { value: i, selected: i === si }, `${s.name || 'Sheet'} (${s.rows} rows)`))) : null;
+  const selects = {};
+  function draw() {
+    const sh = prev.sheets[si];
+    clear(wrap);
+    const heads = [...new Set(sh.headers.filter(Boolean))];
+    const current = (saved.mapping && (prev.sheets[si].name === saved.sheet || !saved.sheet)) ? saved.mapping : sh.suggested;
+    prev.fields.forEach((fld) => {
+      selects[fld] = h('select', null, h('option', { value: '' }, '— not in this file —'),
+        heads.map((x) => h('option', { value: x, selected: current[fld] === x }, x)));
+    });
+    wrap.append(
+      h('p', { class: 'muted small', style: 'margin-top:0' }, sh.auto_detected ? 'The header row and columns below were detected automatically. Adjust anything that is wrong.' : 'No clear header row was found: set the header row number and choose the columns.'),
+      h('div', { class: 'row' }, sheetSel ? h('div', null, h('label', null, 'Sheet'), sheetSel) : null,
+        h('div', null, h('label', null, 'Header row number'), h('div', { class: 'row' }, headerRow,
+          h('button', { class: 'btn sm', onclick: async () => {
+            prev = await api(`/api/engagements/${ctx.eid}/source-preview?file_id=${f.id}&header_row=${+headerRow.value || 1}`); draw();
+          } }, 'Re-read headers'))),
+        h('div', null, h('label', null, 'Type to use when there is no type column'), typeSel)),
+      h('div', { class: 'grid2', style: 'margin-top:12px' }, prev.fields.map((fld) => h('div', null, h('label', null, FIELD_LABEL[fld] || fld), selects[fld]))),
+      h('h3', { style: 'margin-top:14px' }, 'First rows after the header'),
+      h('div', { class: 'scroll', style: 'max-height:180px;border:1px solid var(--border);border-radius:8px' }, h('table', null,
+        h('thead', null, h('tr', null, sh.headers.map((x) => h('th', null, x || '·')))),
+        h('tbody', null, sh.sample.map((r) => h('tr', null, r.map((c) => h('td', { class: 'small' }, c))))))));
+  }
+  draw();
+  modal('Preview & map columns: ' + f.filename, wrap, async () => {
+    const mapping = {};
+    Object.entries(selects).forEach(([k, el]) => { if (el.value) mapping[k] = el.value; });
+    if (!mapping.date || !(mapping.amount || mapping.debit || mapping.credit)) throw new Error('Choose at least a Date column and an Amount (or Debit/Credit) column.');
+    const settings = { mapping, header_row: +headerRow.value || 1 };
+    if (prev.sheets.length > 1) settings.sheet = prev.sheets[si].name;
+    if (typeSel.value) settings.default_type = typeSel.value;
+    await api(`/api/engagements/${ctx.eid}/source-settings`, { method: 'PUT', json: { filename: f.filename, settings } });
+    closeModal(); toast('Column mapping saved. It applies to the next run.', 'ok'); ctx.reload();
+  }, 'Save mapping', Object.keys(saved).length ? clearAll : null);
 }
 
 function runCard(ctx, ready) {
@@ -362,6 +438,9 @@ function runCard(ctx, ready) {
     approval_limit: h('input', { type: 'number', min: 0, step: 'any', value: pol.approval_limit || '', placeholder: 'default 10,000' }),
     abs_tolerance: h('input', { type: 'number', min: 0, step: 'any', value: pol.abs_tolerance || '', placeholder: 'default 0.50' }),
     auto_clear_limit: h('input', { type: 'number', min: 0, step: 'any', value: pol.auto_clear_limit || '', placeholder: 'default 5,000' }),
+    risk: h('input', { type: 'checkbox', checked: !!last.risk_signals }), bench: h('input', { type: 'checkbox', checked: !!last.benchmark, disabled: !foundry }),
+    ailink: h('input', { type: 'checkbox', checked: !!last.ai_linking, disabled: !foundry }),
+    sample: h('input', { type: 'number', min: 0, step: 'any', value: last.sample_interval || '', placeholder: 'blank = review clean entries above the limit' }),
     programmes: h('textarea', { placeholder: '{"lease": [{"test": "amount_agrees"}, {"test": "date_ok", "max_days_after": 10}]}', style: 'font-family:var(--mono);font-size:12px', value: last.programmes_json || '' }),
   };
   const showDefaults = async () => {
@@ -373,7 +452,8 @@ function runCard(ctx, ready) {
     const policy = {};
     ['materiality', 'approval_limit', 'abs_tolerance', 'auto_clear_limit'].forEach((k) => { if (f[k].value !== '') policy[k] = f[k].value; });
     const r = await api(`/api/engagements/${ctx.eid}/runs`, { method: 'POST', json: {
-      extractor: f.extractor.value, analyst: f.analyst.value, ocr: f.ocr.value, dayfirst: f.dayfirst.value === '1', policy, programmes_json: f.programmes.value } });
+      extractor: f.extractor.value, analyst: f.analyst.value, ocr: f.ocr.value, dayfirst: f.dayfirst.value === '1', policy, programmes_json: f.programmes.value,
+      risk_signals: f.risk.checked, benchmark: f.bench.checked, ai_linking: f.ailink.checked, sample_interval: f.sample.value } });
     go(`#/e/${ctx.eid}/results/${r.id}`);
   };
   const running = ctx.data.runs.some((r) => ['queued', 'running'].includes(r.status));
@@ -384,12 +464,17 @@ function runCard(ctx, ready) {
       h('div', null, h('label', null, 'How documents are read'), f.extractor), h('div', null, h('label', null, 'How exceptions are explained'), f.analyst),
       h('div', null, h('label', null, 'Scans and images'), f.ocr), h('div', null, h('label', null, 'Numeric dates in documents'), f.dayfirst)),
     !foundry ? h('p', { class: 'muted small' }, 'AI options are greyed out because Microsoft Foundry is not configured on this server. See Settings.') : null,
-    h('details', { style: 'margin-top:12px' }, h('summary', null, 'Thresholds and programmes (optional)'),
+    h('div', { style: 'margin-top:12px' },
+      h('label', { style: 'display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);margin:4px 0' }, f.risk, 'Extra risk signals (weekend postings, round amounts, just below the approval limit)'),
+      h('label', { style: 'display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);margin:4px 0' }, f.ailink, 'Let the AI suggest a document for entries the rules could not match (always flagged for you to confirm)'),
+      h('label', { style: 'display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);margin:4px 0' }, f.bench, 'Also read every document with the other reader and compare (see the Performance tab)')),
+    h('details', { style: 'margin-top:12px' }, h('summary', null, 'Thresholds, sampling and programmes (optional)'),
       h('div', { class: 'grid2' },
         h('div', null, h('label', null, 'Materiality: amounts at/above this are high severity'), f.materiality),
         h('div', null, h('label', null, 'Approval limit: approver required at/above'), f.approval_limit),
         h('div', null, h('label', null, 'Amount tolerance (absolute)'), f.abs_tolerance),
-        h('div', null, h('label', null, 'Clean entries above this are still sampled for review'), f.auto_clear_limit)),
+        h('div', null, h('label', null, 'Clean entries above this are still sampled for review'), f.auto_clear_limit),
+        h('div', { style: 'grid-column:1/-1' }, h('label', null, 'Statistical sampling of clean entries: pick one entry per this much value (monetary-unit sampling; replaces the rule above)'), f.sample)),
       h('div', { style: 'margin-top:12px' }, h('label', null, 'Custom vouching programmes (JSON, optional) ', h('button', { class: 'btn link', onclick: showDefaults }, 'show built-in programmes')), f.programmes)),
     h('div', { class: 'row', style: 'margin-top:16px' },
       h('button', { class: 'btn primary', disabled: !ready || running, onclick: (e) => guard(e.currentTarget, () => start(e.currentTarget)) }, running ? 'A run is in progress…' : 'Run vouching'),
@@ -512,7 +597,7 @@ async function openDrawer(ctx, ids, idx, onChange) {
       h('tbody', null,
         h('tr', null, h('td', null, 'Type'), h('td', null, t.type.replace('_', ' ')), cell('type', v ? v.doc_type.replace('_', ' ') : '–')),
         h('tr', null, h('td', null, 'Date'), h('td', null, t.date), cell('date', v && v.date)),
-        h('tr', null, h('td', null, 'Amount'), h('td', null, money(t.amount, t.currency)), cell('amount', v && v.amount != null ? money(v.amount, v.currency) + (v.tax != null ? `  (tax ${money(v.tax)})` : '') : '–')),
+        h('tr', null, h('td', null, 'Amount'), h('td', null, money(t.amount, t.currency)), cell('amount', v && v.amount != null ? money(v.amount, v.currency) + (v.subtotal != null || v.tax != null ? `  (${v.subtotal != null ? 'subtotal ' + money(v.subtotal) : ''}${v.subtotal != null && v.tax != null ? ', ' : ''}${v.tax != null ? 'tax ' + money(v.tax) : ''})` : '') : '–')),
         h('tr', null, h('td', null, 'Counterparty'), h('td', null, t.counterparty || '–'), cell('counterparty', v && v.parties.join('; '))),
         h('tr', null, h('td', null, 'Reference'), h('td', null, t.reference || '–'), cell('reference', v && v.references.join('; '))),
         h('tr', null, h('td', null, 'Currency'), h('td', null, t.currency || '–'), cell('currency', v && v.currency)),
@@ -521,7 +606,9 @@ async function openDrawer(ctx, ids, idx, onChange) {
 
     const link = data.link;
     const linkLine = link.marked_no_document ? h('span', null, 'A reviewer marked this entry as having ', h('strong', null, 'no supporting document'), '.')
-      : v ? h('span', null, link.manual ? 'Linked manually by a reviewer.' : `Matched to the document by: ${link.reasons.join(', ')} (score ${link.score}).`,
+      : v ? h('span', null, link.manual ? 'Linked manually by a reviewer.' : link.ai ? `Suggested by the AI (${link.note || 'no reason given'}). Confirm it really supports this entry.`
+          : (data.combined_from || []).length ? `Supported by ${data.combined_from.length} documents that together equal the amount: ${data.combined_from.join(', ')}.`
+          : `Matched to the document by: ${link.reasons.join(', ')} (score ${link.score}).`,
         v.method === 'reviewer-corrected' ? ' Extracted values were corrected by a reviewer.' : '', v.method === 'ocr' ? ' Text was read by OCR, so check the figures.' : '')
       : h('span', null, 'No document cleared the match threshold.', data.closest_file ? [' Closest by content: ', h('strong', null, data.closest_file), ` (score ${link.score}).`] : '');
 
@@ -542,6 +629,7 @@ async function openDrawer(ctx, ids, idx, onChange) {
         h('p', { class: 'small muted', style: 'margin-top:0' }, 'If the agent misread a document or linked the wrong one, correct it here and re-run. Your other decisions are kept for items that did not change.'),
         h('div', { class: 'row' },
           v ? h('button', { class: 'btn sm', onclick: () => voucherEditor(ctx, v, data.source_file && data.source_file.filename) }, 'Correct what was read from the document') : null,
+          codes.has('COUNTERPARTY_MISMATCH') && v ? h('button', { class: 'btn sm', onclick: () => aliasModal(ctx, data) }, 'These are the same company') : null,
           h('button', { class: 'btn sm', onclick: () => linkPicker(ctx, data) }, v ? 'Link a different document' : 'Link a document manually'))));
 
     const sf = data.source_file;
@@ -549,6 +637,7 @@ async function openDrawer(ctx, ids, idx, onChange) {
       h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, sf ? sf.filename : 'Supporting document'),
         sf ? h('div', { class: 'row' }, h('a', { class: 'btn sm', target: '_blank', rel: 'noopener', href: docUrl(run.id, sf.filename) }, 'Open'),
           h('a', { class: 'btn sm', href: docUrl(run.id, sf.filename) + '&download=1' }, 'Download')) : null),
+        sf && (sf.flags || []).length ? h('div', { class: 'banner warn', style: 'margin:10px 0 0' }, '⚠ Integrity: ' + sf.flags.join('; ')) : null,
         h('div', { class: 'preview', style: 'margin-top:10px' }, sf ? previewNode(run.id, sf) : h('div', { class: 'empty' }, 'No document to show.'))),
       decisionCard(data));
 
@@ -604,6 +693,7 @@ function voucherEditor(ctx, v, filename) {
   const f = {
     type: h('select', null, DOC_TYPES.map((t) => h('option', { value: t, selected: t === v.doc_type }, t.replace('_', ' ')))),
     date: h('input', { type: 'date', value: v.date || '' }), amount: h('input', { type: 'number', step: '0.01', value: v.amount ?? '' }),
+    subtotal: h('input', { type: 'number', step: '0.01', value: v.subtotal ?? '' }),
     tax: h('input', { type: 'number', step: '0.01', value: v.tax ?? '' }), currency: h('input', { value: v.currency || '', maxlength: 3, placeholder: 'USD' }),
     parties: h('textarea', { value: v.parties.join('\n') }), refs: h('textarea', { value: v.references.join('\n') }), appr: h('textarea', { value: v.approvals.join('\n') }),
   };
@@ -613,14 +703,14 @@ function voucherEditor(ctx, v, filename) {
     h('p', { class: 'muted small', style: 'margin-top:0' }, origText + '. Corrections are applied the next time you run. They are recorded with your name.'),
     h('div', { class: 'grid2' },
       h('div', null, h('label', null, 'Document type'), f.type), h('div', null, h('label', null, 'Document date'), f.date),
-      h('div', null, h('label', null, 'Total amount'), f.amount), h('div', null, h('label', null, 'Tax'), f.tax),
-      h('div', null, h('label', null, 'Currency (3 letters)'), f.currency), h('div'),
+      h('div', null, h('label', null, 'Total amount'), f.amount), h('div', null, h('label', null, 'Subtotal (before tax)'), f.subtotal),
+      h('div', null, h('label', null, 'Tax'), f.tax), h('div', null, h('label', null, 'Currency (3 letters)'), f.currency),
       h('div', null, h('label', null, 'Parties named (one per line)'), f.parties),
       h('div', null, h('label', null, 'Document numbers (one per line)'), f.refs),
       h('div', null, h('label', null, 'Approved by (one per line)'), f.appr))),
     async () => {
       await api(`/api/engagements/${ctx.eid}/voucher-override`, { method: 'PUT', json: { voucher_id: v.id, note: 'corrected in review', fields: {
-        doc_type: f.type.value, date: f.date.value || null, amount: f.amount.value, tax: f.tax.value, currency: f.currency.value,
+        doc_type: f.type.value, date: f.date.value || null, amount: f.amount.value, subtotal: f.subtotal.value, tax: f.tax.value, currency: f.currency.value,
         parties: lines(f.parties), references: lines(f.refs), approvals: lines(f.appr) } } });
       closeModal(); toast('Correction saved', 'ok'); rerunBar(ctx);
     }, 'Save correction',
@@ -647,6 +737,19 @@ async function linkPicker(ctx, data) {
       await api(`/api/engagements/${ctx.eid}/link-override`, { method: 'PUT', json: { txn_id: data.txn_id, voucher_id: sel.value === '__none__' ? null : sel.value, note: note.value } });
       closeModal(); toast('Link saved', 'ok'); rerunBar(ctx);
     }, 'Save link');
+}
+
+function aliasModal(ctx, data) {
+  const led = data.transaction.counterparty;
+  if (!led) return fail(new Error('This ledger entry has no counterparty name to compare with.'));
+  const sel = h('select', null, data.voucher.parties.map((p) => h('option', { value: p }, p)));
+  modal('Treat two names as the same company', h('div', null,
+    h('p', { class: 'muted small', style: 'margin-top:0' }, 'Use this when the document names the supplier or customer differently from your ledger (a trading name, an abbreviation, a group company). From now on, in this engagement, the two names count as one and will not be flagged. It applies on the next run and is recorded with your name.'),
+    h('label', null, 'The document says'), sel, h('div', { style: 'margin-top:10px' }, h('label', null, 'The ledger says'), h('input', { value: led, disabled: true }))),
+    async () => {
+      await api(`/api/engagements/${ctx.eid}/aliases`, { method: 'POST', json: { name_a: sel.value, name_b: led } });
+      closeModal(); toast('Remembered', 'ok'); rerunBar(ctx);
+    }, 'Treat as the same');
 }
 
 function rerunBar(ctx) {
@@ -678,7 +781,7 @@ async function renderDocuments(ctx) {
   function draw() {
     clear(tbody);
     const q = search.value.toLowerCase();
-    rows.filter(({ doc, v }) => (!problemsOnly.checked || doc.issues.length || !v || v.confidence < 0.7 || !v.linked_txns.length)
+    rows.filter(({ doc, v }) => (!problemsOnly.checked || doc.issues.length || (doc.flags || []).length || !v || v.confidence < 0.7 || !v.linked_txns.length)
       && (!q || (doc.filename + ' ' + (v ? v.parties.join(' ') + v.references.join(' ') : '')).toLowerCase().includes(q)))
       .forEach(({ doc, v }) => tbody.append(h('tr', null,
         h('td', null, h('a', { target: '_blank', rel: 'noopener', href: docUrl(run.id, doc.filename) }, doc.filename)),
@@ -688,7 +791,7 @@ async function renderDocuments(ctx) {
         h('td', { class: 'small' }, v ? v.parties.join('; ') : ''), h('td', { class: 'small' }, v ? v.references.join('; ') : ''),
         h('td', null, v ? [chip(v.confidence.toFixed(2), v.confidence >= 0.7 ? 'auto_cleared' : 'medium'), v.corrected ? [' ', chip('corrected', 'plain')] : null] : '–'),
         h('td', null, v ? (v.linked_txns.length ? v.linked_txns.map((t) => [h('a', { href: `#/e/${ctx.eid}/results/${run.id}?item=${enc(t)}` }, short(t)), ' ']) : h('span', { style: 'color:var(--warn)' }, 'not linked')) : ''),
-        h('td', { class: 'small', style: doc.issues.length ? 'color:var(--danger)' : '' }, doc.issues.join(' · ') || (v && v.notes.length ? v.notes.join(' · ') : '')),
+        h('td', { class: 'small', style: doc.issues.length || (doc.flags || []).length ? 'color:var(--danger)' : '' }, [...(doc.flags || []).map((x) => '⚠ ' + x), ...doc.issues].join(' · ') || (v && v.notes.length ? v.notes.join(' · ') : '')),
         h('td', null, v ? h('button', { class: 'btn sm', onclick: () => voucherEditor(ctx, v, doc.filename) }, 'Correct') : ''))));
   }
   box.append(
@@ -699,6 +802,121 @@ async function renderDocuments(ctx) {
     h('div', { class: 'card flush' }, h('div', { class: 'scroll', style: 'max-height:none' }, h('table', null,
       h('thead', null, h('tr', null, ['File', 'Read by', 'Type', 'Date', 'Total', 'Parties', 'Numbers', 'Confidence', 'Linked to', 'Problems', ''].map((x) => h('th', null, x)))), tbody))));
   draw();
+}
+
+/* ---------- tab: performance ---------- */
+const pct = (x) => (x === null || x === undefined) ? '–' : Math.round(x * 100) + '%';
+const secs = (x) => x === null || x === undefined ? '–' : (x < 1 ? Math.round(x * 1000) + ' ms' : x < 90 ? x.toFixed(1) + ' s' : Math.round(x / 6) / 10 + ' min');
+const bar = (frac, cls) => h('div', { class: 'hbar' }, h('i', { class: cls || '', style: `width:${Math.max(0, Math.min(100, Math.round((frac || 0) * 100)))}%` }));
+const sec = (title, sub, ...kids) => h('div', { class: 'card' }, h('h2', { style: 'margin-bottom:2px' }, title), sub ? h('p', { class: 'muted small', style: 'margin:0 0 12px' }, sub) : null, ...kids);
+
+async function renderPerformance(ctx) {
+  const box = ctx.box, run = ctx.run;
+  if (!run || run.status !== 'completed') return box.append(h('div', { class: 'card empty' }, 'Run the vouching first. This tab measures how the agent did.'));
+  const [P, Q] = await Promise.all([api(`/api/runs/${run.id}/performance`), api(`/api/engagements/${ctx.eid}/quality`)]);
+  const perf = P.perf || {}, llm = perf.llm || { calls: 0, by_purpose: {} }, st = perf.stages || {}, docs = perf.documents || {}, g = perf.guards || {};
+  const usedAI = llm.calls > 0;
+  box.append(h('div', { class: 'banner' }, `Run ${run.id}: documents read by ${perf.readers ? perf.readers.documents : '?'}, explanations by ${perf.readers ? perf.readers.explanations : '?'}. To see how a Foundry model performs, run again with the AI options on and tick "Also read every document with the other reader and compare".`));
+
+  // A. speed and cost
+  const stageList = Object.entries(st).filter(([k]) => k !== 'total');
+  const totalS = st.total || 1;
+  box.append(sec('Speed and cost', 'How long the run took and what the AI model used.',
+    h('div', { class: 'tiles' }, tile(secs(st.total), 'Total time', ''), tile(docs.per_second ? docs.per_second + '/s' : '–', 'Documents read per second', ''),
+      tile(llm.calls, 'AI calls', ''), tile((llm.tokens_in + llm.tokens_out || 0).toLocaleString(), 'Tokens (in + out)', ''),
+      tile(llm.estimated_cost != null ? '$' + (llm.estimated_cost < 0.01 && llm.estimated_cost > 0 ? llm.estimated_cost.toFixed(4) : llm.estimated_cost.toFixed(2)) : '–', 'Estimated cost', ''),
+      tile(`${docs.cache_hits || 0} / ${(docs.cache_hits || 0) + (docs.cache_misses || 0)}`, 'Reads served from cache', 'good')),
+    llm.estimated_cost == null && usedAI ? h('p', { class: 'muted small' }, 'Cost needs prices: enter your price per million tokens in Settings.') : null,
+    h('div', null, stageList.map(([k, v]) => h('div', { class: 'row', style: 'gap:10px;margin:4px 0;flex-wrap:nowrap' },
+      h('div', { style: 'width:170px' }, k), h('div', { style: 'flex:1' }, bar(v / totalS)), h('div', { class: 'nowrap', style: 'width:70px;text-align:right' }, secs(v)))))));
+
+  // B. AI usage by purpose
+  const rowsAI = Object.entries(llm.by_purpose || {});
+  box.append(sec('AI model usage', 'Every model call, by what it was for. Retries are rate-limit or network hiccups the agent recovered from.',
+    rowsAI.length ? h('div', { class: 'scroll', style: 'max-height:none' }, h('table', null, h('thead', null, h('tr', null, ['Purpose', 'Calls', 'Tokens in', 'Tokens out', 'Avg time', 'Slowest 5%', 'Retries', 'Failures'].map((x) => h('th', null, x)))),
+      h('tbody', null, rowsAI.map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v.calls), h('td', null, v.tokens_in.toLocaleString()), h('td', null, v.tokens_out.toLocaleString()),
+        h('td', null, secs(v.avg_seconds)), h('td', null, secs(v.p95_seconds)), h('td', null, v.retries), h('td', { style: v.errors ? 'color:var(--danger)' : '' }, v.errors))))))
+      : h('div', { class: 'muted' }, 'No AI calls in this run (built-in reader and explanations only).')));
+
+  // C. guard rails
+  const guard = (n, label, why) => h('tr', null, h('td', { class: 'nowrap' }, h('strong', null, n)), h('td', null, label), h('td', { class: 'muted small' }, why));
+  box.append(sec('Safety checks: what the guard rails caught', 'These are the model mistakes that would otherwise have reached your workpaper.',
+    h('table', null, h('tbody', null,
+      guard(g.fields_dropped_as_not_in_document ?? 0, 'values the model read that were NOT in the document (dropped)', 'Every value must be backed by an exact quote found in the document text.'),
+      guard(g.assessments_rejected_by_verifier ?? 0, 'explanations rejected by the verifier', 'Invented figures, evidence from other cases, or an attempt to clear a flagged item.'),
+      guard(g.model_failures_fallback_used ?? 0, 'model failures where the built-in fallback was used', 'The case was escalated to a person instead of being silently accepted.'),
+      guard(g.low_confidence_documents ?? 0, 'documents flagged as hard to read', 'Low confidence or dropped fields: a person should read them.'),
+      guard(g.ai_links_suggested ?? 0, 'links suggested by the AI (each needs your confirmation)', (g.ai_link_errors ? g.ai_link_errors + ' adjudication call(s) failed. ' : '') + 'The AI can only pick from real candidate documents.'),
+      guard(g.split_payments ?? 0, 'split payments matched (one entry, several documents adding up)', 'Found by arithmetic, not by the AI.')))));
+
+  // D. reader comparison
+  const B = P.benchmark;
+  box.append(sec('Reader comparison: built-in vs AI', 'The same documents read twice. Where they disagree, one of them is wrong: those are the cases to look at.',
+    B ? [h('div', { class: 'small muted', style: 'margin-bottom:8px' }, `A = ${B.reader_a}   ·   B = ${B.reader_b}   ·   ${B.documents} documents`),
+      h('table', null, h('thead', null, h('tr', null, ['Field', 'Compared', 'Agree', 'Agreement', ''].map((x) => h('th', null, x)))),
+        h('tbody', null, Object.entries(B.fields).map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v.compared), h('td', null, v.agree), h('td', null, pct(v.rate)),
+          h('td', { style: 'width:30%' }, bar(v.rate, v.rate !== null && v.rate < 0.9 ? 'bad' : 'ok')))))),
+      B.disagreements.length ? h('details', { style: 'margin-top:10px' }, h('summary', null, `${B.disagreements.length} disagreement(s)`),
+        h('div', { class: 'scroll' }, h('table', null, h('thead', null, h('tr', null, ['Document', 'Field', 'A', 'B'].map((x) => h('th', null, x)))),
+          h('tbody', null, B.disagreements.map((d) => h('tr', null, h('td', null, d.document), h('td', null, d.field), h('td', { class: 'small' }, d.reader_a), h('td', { class: 'small' }, d.reader_b))))))) : h('p', { style: 'color:var(--ok)' }, '✓ The two readers agree on everything they both read.')]
+      : h('div', { class: 'muted' }, 'Not run. Start a new run with the AI reader and tick "Also read every document with the other reader and compare".')));
+
+  // E. reviewer feedback
+  const R = P.review, T = R.totals;
+  box.append(sec('Reviewer feedback: precision in practice', 'What your reviewers decided about the agent\'s flags. "Precision" = confirmed ÷ (confirmed + dismissed).',
+    h('div', { class: 'tiles' }, tile(T.flagged, 'Items flagged', ''), tile(T.confirmed, 'Confirmed exceptions', T.confirmed ? 'alert' : ''), tile(T.resolved, 'Dismissed (resolved)', ''),
+      tile(T.pending + T.followup, 'Not yet decided', T.pending ? 'warn' : 'good'), tile(pct(T.precision), 'Precision so far', ''),
+      tile(R.corrections.extraction_corrections + ' / ' + R.corrections.documents, 'Documents a person had to correct', ''), tile(R.corrections.aliases_learned, 'Company-name aliases learned', '')),
+    Object.keys(R.by_finding).length ? h('table', null, h('thead', null, h('tr', null, ['Finding', 'Flagged', 'Confirmed', 'Dismissed', 'Undecided', 'Precision', ''].map((x) => h('th', null, x)))),
+      h('tbody', null, Object.entries(R.by_finding).map(([k, v]) => h('tr', null, h('td', null, CODE_LABEL[k] || k), h('td', null, v.flagged), h('td', null, v.confirmed), h('td', null, v.resolved), h('td', null, v.pending + v.followup),
+        h('td', null, pct(v.precision)), h('td', { style: 'width:22%' }, bar(v.precision || 0, v.precision !== null && v.precision < 0.5 ? 'bad' : 'ok')))))) : h('div', { class: 'muted' }, 'No flagged items.'),
+    h('p', { class: 'muted small' }, 'Findings that reviewers keep dismissing are candidates for threshold changes or a custom programme; findings they confirm are the agent earning its keep.')));
+
+  // F. answer key
+  const keyBox = h('textarea', { placeholder: 'item,expected\nR2,CLEAN\nR3,AMOUNT_MISMATCH\nR4,COUNTERPARTY_MISMATCH;DOC_ARITHMETIC\nR5,NO_VOUCHER', style: 'font-family:var(--mono);font-size:12px;min-height:130px' });
+  const keyOut = h('div', { style: 'margin-top:12px' });
+  const file = h('input', { type: 'file', accept: '.csv,.txt', onchange: async (e) => { if (e.target.files[0]) keyBox.value = await e.target.files[0].text(); } });
+  box.append(sec('Score against an answer key', 'If you already know the right answer for some entries, say so: the agent is scored on whether it found exactly those. One line per entry: the entry id shown in the app (R12) and the findings it SHOULD raise, or CLEAN.',
+    keyBox, h('div', { class: 'row', style: 'margin-top:8px' }, file,
+      h('button', { class: 'btn primary', onclick: (e) => guardRun(e.currentTarget, async () => {
+        const r = await api(`/api/runs/${run.id}/evaluate`, { method: 'POST', json: { answer_key: keyBox.value } });
+        clear(keyOut).append(...renderEvaluation(r));
+      }) }, 'Score this run')), keyOut));
+
+  // G. population analytics
+  const I = P.insights || {};
+  if (I.entries) {
+    const b = I.benford || {};
+    box.append(sec('Population analytics', 'Patterns across all entries. They are context for a reviewer, not exceptions.',
+      h('ul', { class: 'plain' },
+        h('li', null, b.note || ''),
+        I.reference_gaps && I.reference_gaps.length ? h('li', null, 'Gaps in numbered references: ' + I.reference_gaps.map((x) => `${x.prefix} ${x.range[0]}–${x.range[1]} missing ${x.missing_count} (e.g. ${x.missing.slice(0, 6).join(', ')})`).join('; ')) : null,
+        I.repeated_amounts && I.repeated_amounts.length ? h('li', null, `${I.repeated_amounts.length} group(s) of entries with the same counterparty and amount: ` + I.repeated_amounts.slice(0, 5).map((x) => `${x.counterparty || '?'} ${money(x.amount)} (${x.entries.map(short).join(', ')})`).join('; ')) : null,
+        h('li', null, `${pct(I.weekend_share)} dated on a weekend · ${pct(I.round_amount_share)} round amounts · ${I.near_approval_limit} just below the approval limit`)),
+      I.concentration && I.concentration.length ? h('table', null, h('thead', null, h('tr', null, ['Largest counterparties', 'Value', 'Share of total'].map((x) => h('th', null, x)))),
+        h('tbody', null, I.concentration.map((c) => h('tr', null, h('td', null, c.counterparty), h('td', null, money(c.value)), h('td', null, pct(c.share)))))) : null));
+  }
+  if (P.sampling && P.sampling.method) box.append(sec('Sampling', null, h('p', { style: 'margin:0' }, P.sampling.method + (P.sampling.interval ? `: one entry per ${money(P.sampling.interval)}, seed ${P.sampling.seed}, ${P.sampling.selected} of ${P.sampling.clean_entries} clean entries selected (reproducible).` : ` (limit ${money(P.sampling.limit)}).`))));
+
+  // H. trend
+  if (Q.length > 1) box.append(sec('Across runs', 'How each run compares.', h('table', null, h('thead', null, h('tr', null, ['Run', 'Reader', 'Time', 'AI calls', 'Tokens', 'Exceptions', 'Confirmed', 'Dismissed', 'Undecided', 'Precision'].map((x) => h('th', null, x)))),
+    h('tbody', null, Q.map((r) => h('tr', null, h('td', null, h('a', { href: `#/e/${ctx.eid}/performance/${r.run}` }, r.run)), h('td', { class: 'small' }, r.extractor), h('td', null, secs(r.seconds)), h('td', null, r.llm_calls ?? '–'),
+      h('td', null, r.tokens != null ? r.tokens.toLocaleString() : '–'), h('td', null, r.exceptions), h('td', null, r.confirmed), h('td', null, r.resolved), h('td', null, r.pending), h('td', null, pct(r.precision))))))));
+}
+const guardRun = (btn, fn) => guard(btn, fn);
+
+function renderEvaluation(r) {
+  const d = r.exception_detection;
+  return [
+    h('div', { class: 'tiles' }, tile(pct(d.recall), 'Recall: real exceptions found', d.recall === 1 ? 'good' : 'alert'), tile(pct(d.precision), 'Precision: flags that were real', d.precision === 1 ? 'good' : 'warn'),
+      tile(pct(d.specificity), 'Clean entries left alone', ''), tile(d.f1 ?? '–', 'F1 score', ''), tile(d.false_negative, 'Missed', d.false_negative ? 'alert' : 'good'), tile(d.false_positive, 'False alarms', d.false_positive ? 'warn' : 'good')),
+    h('p', { class: 'muted small' }, `${r.entries_judged} of ${r.entries_in_key} entries in your key were judged.` + (r.entries_not_in_run.length ? ` Not in this run: ${r.entries_not_in_run.map(short).join(', ')}.` : '')),
+    r.missed.length ? h('div', { class: 'banner err' }, h('strong', null, 'Missed (the agent said clean): '), r.missed.map((m) => `${short(m.item)} should be ${m.expected.join(', ')}`).join(' · ')) : null,
+    r.false_alarms.length ? h('div', { class: 'banner warn' }, h('strong', null, 'False alarms: '), r.false_alarms.map((m) => `${short(m.item)} was flagged ${m.found.join(', ')}`).join(' · ')) : null,
+    r.found_but_different_finding.length ? h('div', { class: 'banner' }, h('strong', null, 'Flagged, but not for the expected reason: '), r.found_but_different_finding.map((m) => `${short(m.item)} expected ${m.expected.join(', ')}, got ${m.found.join(', ')}`).join(' · ')) : null,
+    Object.keys(r.by_finding).length ? h('table', null, h('thead', null, h('tr', null, ['Finding', 'Right', 'False alarms', 'Missed', 'Precision', 'Recall'].map((x) => h('th', null, x)))),
+      h('tbody', null, Object.entries(r.by_finding).map(([k, v]) => h('tr', null, h('td', null, CODE_LABEL[k] || k), h('td', null, v.tp), h('td', null, v.fp), h('td', null, v.fn), h('td', null, pct(v.precision)), h('td', null, pct(v.recall)))))) : null,
+  ];
 }
 
 /* ---------- tab: workpaper & sign-off ---------- */
@@ -772,21 +990,45 @@ async function viewUsers() {
 
 /* ---------- settings ---------- */
 async function viewSettings() {
-  const sys = state.system;
-  const result = h('div', { class: 'small', style: 'margin-top:8px' });
+  const sys = state.system, admin = state.user.role === 'admin';
+  const cfg = admin ? await api('/api/system/foundry').catch(() => null) : null;
+  const result = h('div', { class: 'small', style: 'margin-top:10px' });
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nw = h('input', { type: 'password', autocomplete: 'new-password' });
+  const F = cfg ? {
+    endpoint: h('input', { value: cfg.endpoint, placeholder: 'https://<your-resource>.openai.azure.com' }),
+    deployment: h('input', { value: cfg.deployment, placeholder: 'the deployment name you gave the model in Foundry' }),
+    key: h('input', { type: 'password', autocomplete: 'off', placeholder: cfg.key_set ? '•••••••• saved (leave blank to keep)' : 'leave blank to sign in with your work account (az login)' }),
+    ver: h('input', { value: cfg.api_version, placeholder: 'optional, e.g. 2024-10-21' }),
+    pin: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_in_per_m, placeholder: 'USD per 1M input tokens' }),
+    pout: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_out_per_m, placeholder: 'USD per 1M output tokens' }),
+  } : null;
+  const test = async (btn) => guard(btn, async () => {
+    result.style.color = ''; result.textContent = 'Testing…';
+    const r = await api('/api/system/test-foundry', { method: 'POST' });
+    result.textContent = r.ok ? `✓ Connected to ${r.deployment} in ${r.seconds}s${r.tokens ? ` (${r.tokens.in}+${r.tokens.out} tokens)` : ''}. The model replied: ${r.reply}` : `✗ ${r.error}`;
+    result.style.color = r.ok ? 'var(--ok)' : 'var(--danger)';
+    if (!r.ok && r.detail) result.append(h('div', { class: 'muted' }, r.detail));
+  });
+  const save = (btn) => guard(btn, async () => {
+    const r = await api('/api/system/foundry', { method: 'POST', json: { endpoint: F.endpoint.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value, price_in_per_m: F.pin.value, price_out_per_m: F.pout.value } });
+    state.system.foundry_configured = r.configured; toast('Saved. The AI options are now available.', 'ok'); viewSettings();
+  });
   shell('settings', h('h1', null, 'Settings'),
     h('div', { class: 'card' }, h('h2', null, 'Microsoft Foundry (AI model)'),
-      sys.foundry_configured ? h('div', { class: 'banner ok' }, 'Connection settings are present on the server.') : h('div', { class: 'banner warn' }, 'Not configured. AI options are disabled; the built-in reader and explanations work offline.'),
-      h('p', { class: 'muted' }, 'Set these environment variables (or put them in a ', h('span', { class: 'mono' }, '.env'), ' file in the folder where you start vra-web), then restart the server:'),
-      h('pre', { class: 'mono', style: 'background:var(--hover);padding:10px;border-radius:8px;overflow:auto' }, 'AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com\nAZURE_OPENAI_DEPLOYMENT=<your deployment name>\nAZURE_OPENAI_API_KEY=<key>        # or leave empty and run "az login" to use your work account'),
-      state.user.role === 'admin' ? h('button', { class: 'btn', disabled: !sys.foundry_configured, onclick: (e) => guard(e.currentTarget, async () => {
-        result.textContent = 'Testing…';
-        const r = await api('/api/system/test-foundry', { method: 'POST' });
-        result.textContent = r.ok ? `✓ Connected to ${r.deployment}. Model replied: ${r.reply}` : `✗ ${r.error}`;
-        result.style.color = r.ok ? 'var(--ok)' : 'var(--danger)';
-      }) }, 'Test connection') : null, result,
-      h('p', { class: 'muted small' }, 'Documents sent to an AI model leave this server for your Foundry tenant. Confirm this is approved for client data before using the AI options.')),
+      sys.foundry_configured ? h('div', { class: 'banner ok' }, 'Connected settings are present. Use "Test connection" to check they work.') : h('div', { class: 'banner warn' }, 'Not configured. The built-in reader and explanations work offline; AI options are disabled until you connect a model.'),
+      admin ? [
+        h('p', { class: 'muted' }, 'Find these in the Azure portal (your Azure OpenAI / Foundry resource → Keys and Endpoint) and in Foundry under Deployments. They are stored in the data folder of this server, never shown again, and used immediately: no restart needed.'),
+        h('div', { class: 'grid2' }, h('div', null, h('label', null, 'Endpoint'), F.endpoint), h('div', null, h('label', null, 'Deployment name'), F.deployment),
+          h('div', null, h('label', null, `API key (${cfg.auth})`), F.key), h('div', null, h('label', null, 'API version (optional)'), F.ver),
+          h('div', null, h('label', null, 'Price per 1M input tokens (optional, for cost estimates)'), F.pin), h('div', null, h('label', null, 'Price per 1M output tokens (optional)'), F.pout)),
+        h('div', { class: 'row', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary', onclick: (e) => save(e.currentTarget) }, 'Save'),
+          h('button', { class: 'btn', onclick: (e) => test(e.currentTarget) }, 'Test connection'),
+          cfg.key_set ? h('button', { class: 'btn', onclick: (e) => guard(e.currentTarget, async () => { await api('/api/system/foundry', { method: 'POST', json: { clear_key: true } }); toast('Key removed', 'ok'); viewSettings(); }) }, 'Remove saved key') : null,
+          h('button', { class: 'btn danger', onclick: (e) => guard(e.currentTarget, async () => { if (!confirm('Remove all saved Foundry settings from this server?')) return; await api('/api/system/foundry', { method: 'DELETE' }); await route(); }) }, 'Remove all')),
+        result,
+        h('p', { class: 'muted small' }, 'The key is stored in plain text in a file only the server account can read (foundry.env in the data folder). If your firm requires it, leave the key blank and use Microsoft Entra ID sign-in instead (run "az login" on the server). Documents sent to an AI model leave this server for your Foundry tenant: confirm that is approved for client data.')]
+        : h('p', { class: 'muted' }, 'Only an administrator can change the connection.')),
     h('div', { class: 'card' }, h('h2', null, 'About'), h('table', null, h('tbody', null,
       h('tr', null, h('td', null, 'Version'), h('td', null, sys.version)), h('tr', null, h('td', null, 'Signed in as'), h('td', null, `${state.user.display_name} (${state.user.role})`)),
       h('tr', null, h('td', null, 'Sign-off rule'), h('td', null, sys.solo ? 'Solo mode: you may sign off your own runs (for testing).' : 'A different reviewer must sign off.')),

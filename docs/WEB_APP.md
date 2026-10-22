@@ -25,6 +25,33 @@ Options: `--data-dir D` (default `./vra_data`). The server loads `.env` from the
 6. **Workpaper & sign-off**: download Word / Excel / Markdown / audit log. A reviewer signs off once every
    exception has a decision; the run is then locked.
 
+## The source of truth
+Upload one or several: Excel/CSV (any layout), or a PDF/Word/text/email/scan. For a spreadsheet, **Preview & map
+columns** shows the detected header row, suggests a mapping and lets you correct it (and the sheet, and the type
+for entries without a type column). From a document, entries are read line by line (a date, text and an amount); use
+the AI reader for harder layouts. If a statement shows a running balance, the entry amount (not the balance) is used.
+
+## Options when you run
+* **Reader / explanations / scans**: built-in (offline) or Microsoft Foundry.
+* **Extra risk signals**: weekend postings, round amounts, just below the approval limit (low severity, zero exposure, so they never need a decision on their own).
+* **AI link suggestions**: for entries the rules could not match. The AI can only choose among real candidates, and each AI link is flagged *AI-suggested* for you to confirm.
+* **Compare readers**: reads every document twice (built-in and AI) and lists the disagreements on the Performance tab.
+* **Sampling**: pick one clean entry per N of value (monetary-unit sampling, reproducible with the seed), instead of the simple "above the limit" rule.
+
+## Teaching the agent
+* **Correct what was read** (including subtotal) and **Link a different document**: applied on the next run, recorded with your name, with your other decisions carried forward.
+* **These are the same company**: when a document names the supplier differently from the ledger. The alias is remembered for the engagement.
+
+## Performance tab
+See the README. The answer key format is one line per entry: the entry id as shown in the app (`R12`) and the findings
+it should raise separated by `;`, or `CLEAN`. A header row is ignored. Entries not listed are not scored.
+
+## Connecting Foundry
+Admins can enter the endpoint, deployment name and key on **Settings**: it is stored in `foundry.env` in the data folder,
+applied immediately, never displayed again, and re-loaded at start-up. **Test connection** shows latency and tokens, and
+turns common failures (401, 403, 404, 429, network) into plain instructions. Leave the key blank to use Microsoft Entra
+ID (`az login`). A `.env` file or real environment variables work too. Prices per million tokens enable cost estimates.
+
 ## Roles
 | Role | Can do |
 |---|---|
@@ -36,7 +63,7 @@ Options: `--data-dir D` (default `./vra_data`). The server loads `.env` from the
 Set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` (and `AZURE_OPENAI_API_KEY`, or leave it out and run
 `az login` for Entra ID sign-in) in `.env`, restart, and use **Settings -> Test connection**. Install the extras:
 `pip install -e ".[foundry]"` (and `".[scan]"` to OCR scanned PDFs). Reading results are cached per document, so
-re-runs do not pay for the same document twice. Sending client documents to a model leaves this server: get approval first.
+re-runs do not pay for the same document twice. Rate limits are retried with back-off, and files are read in parallel (4 at a time; `VRA_WORKERS` changes it). Sending client documents to a model leaves this server: get approval first.
 
 ## What is stored
 `vra_data/vra.sqlite3` (users, engagements, runs, decisions, corrections, activity) and `vra_data/engagements/<id>/blobs/`

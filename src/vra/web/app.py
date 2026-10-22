@@ -324,7 +324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/engagements/{eid}")
     def get_engagement(eid: int, _: dict = Depends(current_user)):
         return {"engagement": svc.engagement(eid), "files": svc.list_files(eid), "runs": svc.list_runs(eid),
-                "overrides": svc.overrides(eid)}
+                "overrides": svc.overrides(eid), "source_settings": svc.source_settings(eid), "aliases": svc.list_aliases(eid)}
 
     @app.patch("/api/engagements/{eid}", **api)
     def patch_engagement(eid: int, body: EngagementPatch, user: dict = Depends(current_user)):
@@ -474,8 +474,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------------------------------------------------------------- source of truth setup, aliases
     @app.get("/api/engagements/{eid}/source-preview")
-    def source_preview(eid: int, file_id: int, _: dict = Depends(current_user)):
-        return svc.source_preview(eid, file_id)
+    def source_preview(eid: int, file_id: int, header_row: int | None = None, _: dict = Depends(current_user)):
+        return svc.source_preview(eid, file_id, header_row)
 
     @app.get("/api/engagements/{eid}/source-settings")
     def get_source_settings(eid: int, _: dict = Depends(current_user)):

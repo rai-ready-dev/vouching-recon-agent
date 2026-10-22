@@ -143,6 +143,21 @@ def build_docx(svc: Service, rid: int) -> bytes:
             d.add_paragraph(f"{name}: total {v['amount']}, date {v['date']}, parties {', '.join(v['parties'])}",
                             style="List Bullet")
 
+    ins = rep.insights or {}
+    if ins.get("entries"):
+        d.add_heading("Population analytics (context, not exceptions)", 1)
+        d.add_paragraph((ins.get("benford") or {}).get("note", ""), style="List Bullet")
+        for g in ins.get("reference_gaps", []):
+            d.add_paragraph(f"Gaps in {g['prefix']} {g['range'][0]}-{g['range'][1]}: {g['missing_count']} missing "
+                            f"(e.g. {', '.join(map(str, g['missing'][:6]))})", style="List Bullet")
+        if ins.get("repeated_amounts"):
+            d.add_paragraph(f"{len(ins['repeated_amounts'])} group(s) of entries share the same counterparty and amount.", style="List Bullet")
+        d.add_paragraph(f"Weekend-dated {ins['weekend_share']:.0%}; round amounts {ins['round_amount_share']:.0%}; "
+                        f"just below the approval limit: {ins['near_approval_limit']}.", style="List Bullet")
+    if rep.sampling and rep.sampling.get("method"):
+        sm = rep.sampling
+        d.add_paragraph("Sampling of entries with no exceptions: " + sm["method"] +
+                        (f", one per {float(sm['interval']):,.2f}, seed {sm['seed']}, {sm['selected']} of {sm['clean_entries']} selected." if "interval" in sm else "."))
     d.add_heading("Conclusion", 1)
     pending = sum(1 for it in att if _final_note(it)[0] in ("Pending", "Follow-up needed"))
     confirmed = sum(1 for it in att if _final_note(it)[0] == "Confirmed exception")
@@ -240,6 +255,14 @@ def build_xlsx(svc: Service, rid: int) -> bytes:
                           "; ".join(doc["issues"])])
     sheet("Documents", ["File", "Kind", "Read by", "Doc type", "Date", "Total", "Parties", "Numbers", "Linked to", "Issues"],
           drows, {"File": 30, "Parties": 30, "Issues": 40}, money_cols=(6,))
+    ins = rep.insights or {}
+    irows = [["Entries", ins.get("entries")], ["Benford test", (ins.get("benford") or {}).get("note")],
+             ["Weekend share", ins.get("weekend_share")], ["Round amount share", ins.get("round_amount_share")],
+             ["Just below approval limit", ins.get("near_approval_limit")]]
+    irows += [[f"Gap in {g['prefix']}", f"{g['missing_count']} missing in {g['range'][0]}-{g['range'][1]}"] for g in ins.get("reference_gaps", [])]
+    irows += [[f"Top counterparty {i + 1}", f"{c['counterparty']}: {float(c['value']):,.2f} ({c['share']:.0%})"] for i, c in enumerate(ins.get("concentration", []))]
+    irows += [["Repeated amount", f"{x['counterparty']} {x['amount']}: {', '.join(e.replace('Transaction:', '') for e in x['entries'])}"] for x in ins.get("repeated_amounts", [])]
+    sheet("Insights", ["Measure", "Value"], irows, {"Measure": 30, "Value": 90})
     sheet("Not linked", ["Document (matched no ledger entry)"], [[x] for x in rep.unlinked_documents], {"Document (matched no ledger entry)": 60})
     sheet("Unread - issues", ["Issue"], [[x] for x in rep.intake_issues], {"Issue": 120})
     dec = svc.db.query("SELECT d.txn_id, d.action, d.note, d.created_at, u.display_name AS who, d.carried_from FROM decisions d"

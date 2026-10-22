@@ -110,20 +110,20 @@ def _find_header(rows: list[list], limit: int = 40) -> int | None:
     return None
 
 
-def preview_source(path: str | Path, sample: int = 6) -> dict:
+def preview_source(path: str | Path, sample: int = 6, header_row: int | None = None) -> dict:
     """What was detected in each sheet: header row, headers, suggested column mapping, sample rows."""
     path = Path(path)
     out = []
     for name, rows in _sheets(path):
         hi = _find_header(rows)
-        guess = hi
+        guess = (header_row - 1) if header_row and 1 <= header_row <= max(1, len(rows)) else hi
         if guess is None:  # no clear header: offer the first row with several text cells
             guess = next((i for i, r in enumerate(rows[:40]) if sum(1 for c in r if isinstance(c, str) and c.strip()) >= 3), 0)
         headers = [str(c).strip() if c is not None else "" for c in (rows[guess] if rows else [])]
         sug = {f: headers[i] for f, i in _map_headers(rows[guess]).items()} if rows else {}
         body = [[("" if c is None else (c.date().isoformat() if isinstance(c, datetime) else str(c))) for c in r]
                 for r in rows[guess + 1: guess + 1 + sample]]
-        out.append({"name": name, "header_row": guess + 1, "auto_detected": hi is not None, "headers": headers,
+        out.append({"name": name, "header_row": guess + 1, "auto_detected": hi is not None and not header_row, "headers": headers,
                     "suggested": sug, "sample": body, "rows": max(0, len(rows) - guess - 1)})
     return {"sheets": out, "fields": list(FIELDS)}
 

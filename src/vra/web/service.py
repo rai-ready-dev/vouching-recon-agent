@@ -559,7 +559,7 @@ class Service:
             raise ApiError(404, "File not found.")
         return dict(row)
 
-    def source_preview(self, eid: int, fid: int) -> dict:
+    def source_preview(self, eid: int, fid: int, header_row: int | None = None) -> dict:
         from ..ledger import LedgerError, preview_source
 
         f = self._file(eid, fid)
@@ -573,7 +573,7 @@ class Service:
         tmp = self.settings.data_dir / f".preview-{os.getpid()}-{fid}{ext}"
         try:
             tmp.write_bytes(blob.read_bytes())
-            return {"kind": "spreadsheet", "filename": f["filename"], "settings": saved, **preview_source(tmp)}
+            return {"kind": "spreadsheet", "filename": f["filename"], "settings": saved, **preview_source(tmp, header_row=header_row)}
         except LedgerError as e:
             raise ApiError(400, str(e))
         finally:
@@ -667,7 +667,7 @@ class Service:
         tot = {"flagged": 0, "confirmed": 0, "resolved": 0, "followup": 0, "pending": 0}
         for r in rows:
             codes = [c for c in r["codes"].split(",") if c]
-            if not codes:
+            if not codes or r["disposition"] == "auto_cleared":  # signal-only items never needed a decision
                 continue
             st = self.review_status(r["last_action"])
             tot["flagged"] += 1

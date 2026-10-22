@@ -35,44 +35,55 @@ agent misread, decide (resolve / confirm exception / follow-up), then sign off a
 workpaper. Full team guide: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 * `--solo` lets one person sign off their own run (testing). Leave it off for teams: a different reviewer must sign off.
-* Put the Foundry settings in a `.env` file in the folder you start from (see `.env.example`); the server loads it
-  automatically. Real environment variables win over the file.
+* Connect Foundry either on the **Settings** page (admin; no restart) or in a `.env` file in the folder you start from
+  (see `.env.example`). Real environment variables win over `.env`; settings saved on the Settings page win over both.
+  Check it from the command line with `python -m vra check-foundry`.
 * Data (database, uploaded documents, run outputs) lives in `./vra_data` (change with `--data-dir`). Back this folder up.
 
 ## Quick start (command line)
 
 ```bash
-pytest                                                  # 61 tests
+pytest                                                  # 105 tests
 vra demo-docs                                           # mixed-format documents + ledger -> demo_docs_output/
 vra demo                                                # structured three-way-match + bank-rec demos
 ```
 
 ## What it can vouch
 
-**Any ledger entry against any supporting document**, using a *vouching programme* chosen by the entry's
-`Type` (purchase, sales, expense, payroll, fixed_asset, bank_payment, other; aliases like `revenue`,
-`capex`, `salary` are understood; unknown types fall back to `other`).
+**Any source of truth against any supporting documents.** The *source of truth* is the set of records you are
+vouching: a ledger, journal, bank statement, schedule or listing, as Excel/CSV with **any column layout**, or as a
+PDF, Word file, text, email or scan. Several source files can be combined. The *supporting documents* are whatever
+backs those records up. A vouching programme (chosen by each entry's `Type`) tests each entry against its document.
 
 | Step | What happens |
 |---|---|
-| Read | PDF (text layer), scans/images (via OCR engine), Excel, Word, CSV, text, email. Unreadable, encrypted, empty or unsupported files are **reported, never skipped silently**. |
-| Extract | Date, total, tax, currency, parties, document numbers, approvals, document type. Heuristic offline extractor, or an LLM extractor that must return a **verbatim quote** for every field; values not found in the document are dropped. |
-| Link | Each ledger entry is linked to its best document by reference, amount, counterparty and date (explainable score). |
-| Test | Per-type programme: right document type, amount agrees, counterparty named, reference agrees, currency, date/cut-off, document not reused, approval above limit, extraction quality. |
-| Report | Exceptions with evidence, documents that could not be read, and documents matching **no** ledger entry (possible unrecorded items). |
+| Read the source | Spreadsheets: automatic header detection plus a **preview-and-map-columns** screen for unusual layouts. PDF/Word/text: entries read line by line, or by the AI reader (rows must be quoted from the document). |
+| Read the documents | PDF (text layer), scans/images (OCR), Excel, Word, CSV, text, email. Unreadable, encrypted, empty or unsupported files are **reported, never skipped silently**. Files are read in parallel and results are cached. |
+| Extract | Date, subtotal, tax, total, currency, parties, document numbers, approvals, document type. Offline reader, or an AI reader that must return a **verbatim quote** for every field: anything not found in the document is dropped. |
+| Link | By reference, amount, counterparty and date, with typo-tolerant references, reviewer-taught company aliases, **split payments** (several documents that add up to one entry) and an optional **AI adjudicator** for what the rules cannot match (it can only choose from real candidates and every AI link is flagged for confirmation). |
+| Test | Right document type, amount, counterparty, reference, currency, date and cut-off, document reused, approval above a limit, **document arithmetic** (subtotal + tax = total), **document integrity** (PDF/Word/Excel edited after creation or by an editing tool), extraction quality. Optional risk signals: weekend postings, round amounts, just below the approval limit. |
+| Sample | Clean entries are sampled for a look by rule, or by reproducible **monetary-unit sampling**. |
+| Report | Exceptions with evidence, unreadable documents, documents matching **no** entry (possible unrecorded items), population analytics (Benford, reference gaps, concentration, repeated amounts). |
 
 ```bash
 vra extract    --docs my_docs                     # just show what was read from each document
 vra vouch-docs --ledger gl.xlsx --docs my_docs --period-start 2026-01-01 --period-end 2026-03-31 --out out
 vra vouch-docs --ledger gl.xlsx --docs my_docs --programmes my_programmes.json    # add/change tests per type
 ```
-Ledger: `.xlsx`/`.csv` with a header row containing at least Date and Amount (or Debit/Credit). Recognised
-columns: Type, Date, Counterparty/Vendor/Customer, Reference/Invoice No, Amount, Currency, Approver,
-Account, Description (see `ledger.py` for aliases).
-
 Programme override file (JSON): `{"lease": [{"test": "amount_agrees"}, {"test": "date_ok", "max_days_after": 10}]}`.
-Available tests: `doc_type, amount_agrees, counterparty_agrees, reference_agrees, currency_agrees, date_ok,
-voucher_not_reused, approval_present, extraction_quality`.
+Tests: `doc_type, amount_agrees, counterparty_agrees, reference_agrees, currency_agrees, date_ok, voucher_not_reused,
+approval_present, extraction_quality, doc_arithmetic, document_integrity, risk_signals`.
+
+## Measuring the agent (Performance tab)
+
+Every run records what it did, so you can judge it with evidence rather than impressions:
+
+* **Speed and cost**: time per stage, documents per second, AI calls, tokens, estimated cost (enter your prices in Settings), cache hits.
+* **AI usage** by purpose (reading, explaining, linking, OCR): calls, tokens, average and slowest times, retries, failures.
+* **Guard rails**: values the model produced that were *not in the document* (dropped), explanations the verifier rejected, model failures that fell back to a person.
+* **Reader comparison**: tick *Also read every document with the other reader*; the built-in and AI readers are compared field by field and every disagreement is listed.
+* **Reviewer feedback**: of the items the agent flagged, how many reviewers confirmed vs dismissed (precision per finding type), how many documents had to be corrected, how many company aliases were learned.
+* **Answer key**: give the right answers for entries you know (`R12,AMOUNT_MISMATCH` or `R13,CLEAN`) and get recall, precision, specificity, missed items and false alarms.
 
 ### Structured workflows (earlier modules)
 `vra vouch --data folder` (invoice/PO/GRN three-way match with cumulative billing and duplicate/split
@@ -117,12 +128,12 @@ client documents to your Foundry tenant is approved.
 ```
 src/vra/
   records.py  evidence.py  findings.py  policy.py  money.py  textutil.py
-  ingest.py  extract.py  intake.py  ledger.py  linking.py  programmes.py      # document vouching
-  llm.py (Foundry client + OCR)  analysts.py  verifier.py  reports.py  orchestrator.py
+  ingest.py  extract.py  intake.py  ledger.py  source_rows.py  linking.py  adjudicator.py  programmes.py   # document vouching
+  sampling.py  analytics.py  llm.py (Foundry client, retries, usage metering, OCR)  analysts.py  verifier.py  reports.py  orchestrator.py
   engine/     recompute · three_way · duplicates · matching · bank_rec · aging
   audit_log.py workpaper.py loaders.py sample_data.py sample_docs.py evaluation.py envfile.py cli.py
   web/        app.py (API) service.py runner.py exports.py auth.py db.py main.py static/ (the UI)
-tests/        61 tests: formats, extraction grounding, linking, programmes, web API, permissions, upload safety
+tests/        105 tests: formats, grounding, linking, AI paths with a stand-in model, web API, permissions, uploads
 docs/         ARCHITECTURE.md (target design and roadmap)
 ```
 
