@@ -56,10 +56,12 @@ See the README. The answer key format is one line per entry: the entry id as sho
 it should raise separated by `;`, or `CLEAN`. A header row is ignored. Entries not listed are not scored.
 
 ## Connecting Foundry
-Admins can enter the endpoint, deployment name and key on **Settings**: it is stored in `foundry.env` in the data folder,
-applied immediately, never displayed again, and re-loaded at start-up. **Test connection** shows latency and tokens, and
-turns common failures (401, 403, 404, 429, network) into plain instructions. Leave the key blank to use Microsoft Entra
-ID (`az login`). A `.env` file or real environment variables work too. Prices per million tokens enable cost estimates.
+Set the endpoint, deployment name and key in `.env` in the folder where you start the server, then restart the app.
+Real environment variables take priority. Legacy `foundry.env` files in the data folder are ignored.
+The Foundry section of **Settings** is read-only; administrators can inspect non-secret connection details and use
+**Test connection** for latency, tokens and plain instructions for common failures (401, 403, 404, 429, network).
+Leave the key unset to use Microsoft Entra ID (`az login`). Optional `VRA_PRICE_IN_PER_M` and
+`VRA_PRICE_OUT_PER_M` values in `.env` enable cost estimates. Keep `.env` private and never commit API keys.
 
 ## Roles
 | Role | Can do |
@@ -95,7 +97,9 @@ Every run keeps an exact snapshot of the files it used. **Back up the whole `vra
 The red message names the likely cause and the grey line shows exactly what was tried (never the key). For a 401 or
 404, click **Try other address styles**: the app tries the classic Azure OpenAI address and the OpenAI-compatible
 (`/openai/v1/`) address on each host a resource answers on (`.openai.azure.com`, `.cognitiveservices.azure.com`,
-`.services.ai.azure.com`) with your saved key, shows which one works, and **Use this** saves it. A Foundry resource
+`.services.ai.azure.com`) with the server-configured key and shows which one works without changing settings.
+Copy the suggested address into `.env` and restart the app. Clear `AZURE_OPENAI_BASE_URL` when switching back to
+a classic `AZURE_OPENAI_ENDPOINT`. A Foundry resource
 (address ending `services.ai.azure.com`) often needs the `/openai/v1/` style. If none works, the key belongs to a
 different resource, key sign-in is disabled (use `az login`), or the deployment name is wrong.
 

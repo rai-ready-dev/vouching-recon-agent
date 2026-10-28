@@ -991,18 +991,9 @@ async function viewUsers() {
 /* ---------- settings ---------- */
 async function viewSettings() {
   const sys = state.system, admin = state.user.role === 'admin';
-  const cfg = admin ? await api('/api/system/foundry').catch(() => null) : null;
+  const cfg = admin ? await api('/api/system/foundry') : null;
   const result = h('div', { class: 'small', style: 'margin-top:10px' });
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nw = h('input', { type: 'password', autocomplete: 'new-password' });
-  const F = cfg ? {
-    endpoint: h('input', { value: cfg.endpoint, placeholder: 'https://<your-resource>.openai.azure.com' }),
-    base: h('input', { value: cfg.base_url, placeholder: 'optional: …/openai/v1/ (use this if another app of yours uses that style)' }),
-    deployment: h('input', { value: cfg.deployment, placeholder: 'the deployment name you gave the model in Foundry' }),
-    key: h('input', { type: 'password', autocomplete: 'off', placeholder: cfg.key_set ? `saved, ending ${cfg.key_hint || '••••'} (leave blank to keep)` : 'leave blank to sign in with your work account (az login)' }),
-    ver: h('input', { value: cfg.api_version, placeholder: 'optional, e.g. 2024-10-21' }),
-    pin: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_in_per_m, placeholder: 'USD per 1M input tokens' }),
-    pout: h('input', { type: 'number', min: 0, step: 'any', value: cfg.price_out_per_m, placeholder: 'USD per 1M output tokens' }),
-  } : null;
   const test = async (btn) => guard(btn, async () => {
     result.style.color = ''; result.textContent = 'Testing…';
     const r = await api('/api/system/test-foundry', { method: 'POST' });
@@ -1013,38 +1004,30 @@ async function viewSettings() {
   });
   const probeOut = h('div', { style: 'margin-top:10px' });
   const probeStyles = (btn) => guard(btn, async () => {
-    clear(probeOut).append(h('div', { class: 'muted' }, h('span', { class: 'spin' }), ' Trying the likely address styles with your saved key (up to a minute)…'));
-    const r = await api('/api/system/foundry/probe', { method: 'POST', json: { endpoint: F.endpoint.value, base_url: F.base.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value } });
+    clear(probeOut).append(h('div', { class: 'muted' }, h('span', { class: 'spin' }), ' Trying the likely address styles with the server configuration (up to a minute)…'));
+    const r = await api('/api/system/foundry/probe', { method: 'POST', json: {} });
     clear(probeOut).append(h('table', null, h('tbody', null, r.results.map((x) => h('tr', null,
       h('td', { class: 'nowrap', style: x.ok ? 'color:var(--ok)' : 'color:var(--danger)' }, x.ok ? '✓ works' : '✗ ' + (x.status || 'failed')),
       h('td', null, x.label, !x.ok ? h('div', { class: 'small muted' }, x.error) : null),
-      h('td', { class: 'right' }, x.ok ? h('button', { class: 'btn primary sm', onclick: (e) => guard(e.currentTarget, async () => {
-        await api('/api/system/foundry', { method: 'POST', json: x.base_url ? { base_url: x.base_url } : { endpoint: x.endpoint, clear_base_url: true } });
-        toast('Saved this address style', 'ok'); viewSettings();
-      }) }, 'Use this') : null))))),
+      h('td', { class: 'right' }, x.ok ? h('code', null, x.base_url ? `AZURE_OPENAI_BASE_URL=${x.base_url}` : `AZURE_OPENAI_ENDPOINT=${x.endpoint}`) : null))))),
+      r.results.some((x) => x.ok) ? h('p', { class: 'muted small' }, 'To use a working address, update .env and restart the app. Clear AZURE_OPENAI_BASE_URL when switching back to a classic endpoint. This test does not change settings.') : null,
       r.results.some((x) => x.ok) ? null : h('p', { class: 'muted small' }, 'None worked with this key. The usual causes now: the key is for a different resource than this address, key sign-in is disabled (use az login), or the deployment name is wrong.'));
-  });
-  const save = (btn) => guard(btn, async () => {
-    const r = await api('/api/system/foundry', { method: 'POST', json: { endpoint: F.endpoint.value, base_url: F.base.value, deployment: F.deployment.value, api_key: F.key.value, api_version: F.ver.value, price_in_per_m: F.pin.value, price_out_per_m: F.pout.value } });
-    state.system.foundry_configured = r.configured; toast('Saved. The AI options are now available.', 'ok'); viewSettings();
   });
   shell('settings', h('h1', null, 'Settings'),
     h('div', { class: 'card' }, h('h2', null, 'Microsoft Foundry (AI model)'),
       sys.foundry_configured ? h('div', { class: 'banner ok' }, 'Connected settings are present. Use "Test connection" to check they work.') : h('div', { class: 'banner warn' }, 'Not configured. The built-in reader and explanations work offline; AI options are disabled until you connect a model.'),
       admin ? [
-        h('p', { class: 'muted' }, 'Find these in the Azure portal (your Azure OpenAI / Foundry resource → Keys and Endpoint) and in Foundry under Deployments. They are stored in the data folder of this server, never shown again, and used immediately: no restart needed.'),
-        h('div', { class: 'grid2' }, h('div', null, h('label', null, 'Endpoint'), F.endpoint), h('div', null, h('label', null, 'Deployment name'), F.deployment),
-          h('div', { style: 'grid-column:1/-1' }, h('label', null, 'OpenAI-compatible base URL (optional, replaces the endpoint above when set)'), F.base),
-          h('div', null, h('label', null, `API key (${cfg.auth})`), F.key), h('div', null, h('label', null, 'API version (optional)'), F.ver),
-          h('div', null, h('label', null, 'Price per 1M input tokens (optional, for cost estimates)'), F.pin), h('div', null, h('label', null, 'Price per 1M output tokens (optional)'), F.pout)),
+        h('p', { class: 'muted' }, 'Foundry is managed in the server .env file, loaded from the folder where you start the app. Edit that file and restart the app to change the connection. Real environment variables take priority; previously saved UI settings are ignored.'),
+        h('table', null, h('tbody', null,
+          [['Endpoint', cfg.endpoint], ['OpenAI-compatible base URL', cfg.base_url], ['Deployment name', cfg.deployment],
+            ['Authentication', cfg.auth], ['API key', cfg.key_set ? `Configured ${cfg.key_hint}` : 'Not set'],
+            ['API version', cfg.api_version], ['Price per 1M input tokens', cfg.price_in_per_m],
+            ['Price per 1M output tokens', cfg.price_out_per_m]].map(([label, value]) => h('tr', null, h('td', null, label), h('td', null, value || 'Not set'))))),
         h('div', { class: 'row', style: 'margin-top:14px' },
-          h('button', { class: 'btn primary', onclick: (e) => save(e.currentTarget) }, 'Save'),
-          h('button', { class: 'btn', onclick: (e) => test(e.currentTarget) }, 'Test connection'),
-          cfg.key_set ? h('button', { class: 'btn', onclick: (e) => guard(e.currentTarget, async () => { await api('/api/system/foundry', { method: 'POST', json: { clear_key: true } }); toast('Key removed', 'ok'); viewSettings(); }) }, 'Remove saved key') : null,
-          h('button', { class: 'btn danger', onclick: (e) => guard(e.currentTarget, async () => { if (!confirm('Remove all saved Foundry settings from this server?')) return; await api('/api/system/foundry', { method: 'DELETE' }); await route(); }) }, 'Remove all')),
+          h('button', { class: 'btn', onclick: (e) => test(e.currentTarget) }, 'Test connection')),
         result, probeOut,
-        h('p', { class: 'muted small' }, 'The key is stored in plain text in a file only the server account can read (foundry.env in the data folder). If your firm requires it, leave the key blank and use Microsoft Entra ID sign-in instead (run "az login" on the server). Documents sent to an AI model leave this server for your Foundry tenant: confirm that is approved for client data.')]
-        : h('p', { class: 'muted' }, 'Only an administrator can change the connection.')),
+        h('p', { class: 'muted small' }, 'Keep .env private and never commit API keys. For Microsoft Entra ID, leave the key unset and run "az login" on the server. Documents sent to an AI model leave this server for your Foundry tenant: confirm that is approved for client data.')]
+        : h('p', { class: 'muted' }, 'The connection is managed by the server administrator in .env.')),
     h('div', { class: 'card' }, h('h2', null, 'About'), h('table', null, h('tbody', null,
       h('tr', null, h('td', null, 'Version'), h('td', null, sys.version)), h('tr', null, h('td', null, 'Signed in as'), h('td', null, `${state.user.display_name} (${state.user.role})`)),
       h('tr', null, h('td', null, 'Sign-off rule'), h('td', null, sys.solo ? 'Solo mode: you may sign off your own runs (for testing).' : 'A different reviewer must sign off.')),

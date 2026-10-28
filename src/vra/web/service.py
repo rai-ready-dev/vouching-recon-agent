@@ -296,7 +296,7 @@ class Service:
         wants_ai = "foundry" in (o["extractor"], o["analyst"], o["ocr"]) or o["benchmark"] or o["ai_linking"]
         if wants_ai and not foundry_configured():
             raise ApiError(400, "Microsoft Foundry is not configured on the server. Set AZURE_OPENAI_ENDPOINT and "
-                                "AZURE_OPENAI_DEPLOYMENT (see Settings), or choose the offline options.")
+                                "AZURE_OPENAI_DEPLOYMENT in .env and restart the app, or choose the offline options.")
         si = raw.get("sample_interval")
         if si not in (None, ""):
             try:

@@ -93,18 +93,6 @@ class VoucherOverride(BaseModel):
     note: str = ""
 
 
-class FoundryBody(BaseModel):
-    endpoint: str = ""
-    base_url: str = ""
-    deployment: str = ""
-    api_key: str = ""
-    api_version: str = ""
-    price_in_per_m: str = ""
-    price_out_per_m: str = ""
-    clear_key: bool = False
-    clear_base_url: bool = False
-
-
 class SourceSettingsBody(BaseModel):
     filename: str
     settings: dict = {}
@@ -153,7 +141,7 @@ class LinkOverride(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     settings.ensure_dirs()
-    foundry_settings.load(settings)  # connection details saved from the Settings page
+    foundry_settings.load()
     db = Database(settings.db_path)
     auth = Auth(db, settings)
     svc = Service(db, settings, auth)
@@ -283,7 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import time
 
         if not foundry_configured():
-            raise ApiError(400, "Foundry is not configured. Enter the endpoint and deployment on this page first.")
+            raise ApiError(400, "Foundry is not configured. Set the endpoint and deployment in the server's .env file, then restart the app.")
         try:
             from ..llm import FoundryChat
 
@@ -305,26 +293,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return foundry_settings.current()
 
     @app.post("/api/system/foundry", **api)
-    def save_foundry(body: FoundryBody, user: dict = Depends(admin)):
-        try:
-            foundry_settings.save(settings, body.model_dump(exclude={"clear_key", "clear_base_url"}), body.clear_key, body.clear_base_url)
-        except ValueError as e:
-            raise ApiError(400, str(e))
-        svc.log(user, "foundry_settings_saved", "deployment=" + (body.deployment or foundry_settings.current()["deployment"]))
-        return foundry_settings.current() | {"configured": foundry_configured()}
+    def save_foundry(_: dict = Depends(admin)):
+        raise ApiError(403, "Foundry settings are server-managed. Edit the server's .env file and restart the app.")
 
     @app.post("/api/system/foundry/probe", **api)
-    def probe_foundry(body: FoundryBody, _: dict = Depends(admin)):
-        results = foundry_settings.probe(body.model_dump())
+    def probe_foundry(_: dict = Depends(admin)):
+        results = foundry_settings.probe({})
         if not results:
-            raise ApiError(400, "Enter the endpoint (or base URL) first.")
+            raise ApiError(400, "Set the endpoint (or base URL) in the server's .env file and restart the app first.")
         return {"results": results}
 
     @app.delete("/api/system/foundry", **api)
-    def delete_foundry(user: dict = Depends(admin)):
-        foundry_settings.clear(settings)
-        svc.log(user, "foundry_settings_cleared")
-        return {"configured": foundry_configured()}
+    def delete_foundry(_: dict = Depends(admin)):
+        raise ApiError(403, "Foundry settings are server-managed. Edit the server's .env file and restart the app.")
 
     @app.get("/api/programmes")
     def programmes(_: dict = Depends(current_user)):

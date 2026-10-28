@@ -1,26 +1,16 @@
-"""Connect Microsoft Foundry from the UI: stored in the data folder, applied immediately, never sent back."""
+"""Read server-managed Foundry configuration and expose non-secret connection diagnostics."""
 from __future__ import annotations
 
 import os
 import re
-import stat
-from pathlib import Path
 from urllib.parse import urlparse
 
-from ..envfile import load_env_file, parse_env
-from .config import Settings
-
-KEYS = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION",
-        "VRA_PRICE_IN_PER_M", "VRA_PRICE_OUT_PER_M")
+from ..envfile import load_env_file
 
 
-def path(settings: Settings) -> Path:
-    return settings.data_dir / "foundry.env"
-
-
-def load(settings: Settings) -> None:
-    """Called at start-up: settings saved from the UI win over the .env file."""
-    load_env_file(path(settings), override=True)
+def load() -> None:
+    """Load .env at startup; real environment variables win. Ignore legacy UI settings."""
+    load_env_file(".env")
 
 
 def current() -> dict:
@@ -75,27 +65,6 @@ def validate(values: dict) -> dict:
     return out
 
 
-def save(settings: Settings, values: dict, clear_key: bool = False, clear_base_url: bool = False) -> None:
-    new = validate(values)
-    p = path(settings)
-    existing = parse_env(p.read_text(encoding="utf-8-sig")) if p.is_file() else {}
-    existing.update(new)
-    if clear_key:
-        existing.pop("AZURE_OPENAI_API_KEY", None)
-        os.environ.pop("AZURE_OPENAI_API_KEY", None)
-    if clear_base_url and "AZURE_OPENAI_BASE_URL" not in new:
-        existing.pop("AZURE_OPENAI_BASE_URL", None)
-        os.environ.pop("AZURE_OPENAI_BASE_URL", None)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("# Written by the Settings page. Contains a secret: do not share or commit this file.\n"
-                 + "".join(f"{k}={v}\n" for k, v in existing.items() if k in KEYS), encoding="utf-8")
-    try:
-        p.chmod(stat.S_IRUSR | stat.S_IWUSR)  # best effort; Windows ignores most of this
-    except OSError:
-        pass
-    os.environ.update({k: v for k, v in new.items()})
-
-
 def candidate_styles(endpoint: str, base_url: str) -> list[dict]:
     """Address styles worth trying for a resource: classic and OpenAI-compatible (v1), on each host a Foundry/Azure
     OpenAI resource answers on."""
@@ -135,11 +104,3 @@ def probe(values: dict, make=None, per_try_seconds: float = 20.0, styles: list[d
         if row["ok"]:
             break  # the first style that works is the one to use
     return results
-
-
-def clear(settings: Settings) -> None:
-    p = path(settings)
-    if p.is_file():
-        for k in parse_env(p.read_text(encoding="utf-8-sig")):
-            os.environ.pop(k, None)
-        p.unlink()

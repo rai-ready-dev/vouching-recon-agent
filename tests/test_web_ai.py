@@ -234,34 +234,48 @@ def test_reviewer_decisions_measure_precision(web, demo):
 
 
 # ---------------------------------------------------------------- Foundry settings page
-def test_foundry_settings_are_admin_only_validated_and_never_echoed(tmp_path, monkeypatch):
+def test_foundry_settings_use_dotenv_ignore_legacy_ui_and_reject_changes(tmp_path, monkeypatch):
     saved = {k: os.environ.pop(k, None) for k in ENV}
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env"
+    env_file.write_text("AZURE_OPENAI_ENDPOINT=https://res.openai.azure.com\n"
+                        "AZURE_OPENAI_DEPLOYMENT=gpt-prod\n"
+                        "AZURE_OPENAI_API_KEY=" + "k" * 32 + "\n", encoding="utf-8")
+    legacy = tmp_path / "data" / "foundry.env"
+    legacy.parent.mkdir()
+    legacy.write_text("AZURE_OPENAI_ENDPOINT=https://old.openai.azure.com\n"
+                      "AZURE_OPENAI_DEPLOYMENT=old-model\nAZURE_OPENAI_API_KEY=old-key\n"
+                      "AZURE_OPENAI_BASE_URL=https://old.openai.azure.com/openai/v1/\n", encoding="utf-8")
+    original = env_file.read_bytes(), legacy.read_bytes()
     try:
         app, c = make_client(tmp_path)
         c.post("/api/setup", json={"username": "admin", "password": PW})
         rev = login_as(app, "rita", "reviewer")
         assert rev.get("/api/system/foundry").status_code == 403 and rev.post("/api/system/foundry", json={}).status_code == 403
-        bad = lambda **kw: c.post("/api/system/foundry", json=kw).status_code
-        assert bad(endpoint="http://insecure.example.com") == 400 and bad(deployment="has spaces") == 400
-        assert bad(api_key="short") == 400 and bad(api_version="latest") == 400 and bad(price_in_per_m="abc") == 400
-        r = c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com/", "deployment": "gpt-prod",
-                                                 "api_key": "k" * 32, "price_in_per_m": "2.5"}).json()
-        assert r["configured"] is True and r["key_set"] is True and "k" * 32 not in json.dumps(r)
+        r = c.get("/api/system/foundry").json()
+        assert r["endpoint"] == "https://res.openai.azure.com" and r["deployment"] == "gpt-prod"
+        assert r["key_set"] is True and r["base_url"] == "" and "k" * 32 not in json.dumps(r)
         assert "k" * 32 not in c.get("/api/system/foundry").text and c.get("/api/system").json()["foundry_configured"] is True
-        env_file = tmp_path / "data" / "foundry.env"
-        assert "AZURE_OPENAI_API_KEY=" + "k" * 32 in env_file.read_text()
-        if os.name == "posix":
-            assert oct(env_file.stat().st_mode & 0o777) == "0o600"
-        # a restart (fresh app on the same data folder) picks the saved settings up again
+        assert c.post("/api/system/foundry", json={"deployment": "ui-model", "api_key": "u" * 32}).status_code == 403
+        assert c.post("/api/system/foundry", json={"clear_key": True, "clear_base_url": True}).status_code == 403
+        assert c.delete("/api/system/foundry").status_code == 403
+        assert c.get("/api/system/foundry").json() == r
+        assert (env_file.read_bytes(), legacy.read_bytes()) == original
+        # A fresh process reads file edits, not the legacy settings.
+        env_file.write_text(env_file.read_text(encoding="utf-8").replace("gpt-prod", "file-model"), encoding="utf-8")
         for k in ENV:
             os.environ.pop(k, None)
         app2, c2 = make_client(tmp_path)
-        assert app2.state.settings.data_dir == app.state.settings.data_dir and os.environ["AZURE_OPENAI_DEPLOYMENT"] == "gpt-prod"
-        # keep the key when only the deployment changes; clear it on request
-        c.post("/api/system/foundry", json={"deployment": "gpt-new"})
-        assert os.environ["AZURE_OPENAI_API_KEY"] == "k" * 32 and os.environ["AZURE_OPENAI_DEPLOYMENT"] == "gpt-new"
-        assert c.post("/api/system/foundry", json={"clear_key": True}).json()["key_set"] is False
-        assert c.delete("/api/system/foundry").json()["configured"] is False and not env_file.exists()
+        assert app2.state.settings.data_dir == app.state.settings.data_dir
+        assert os.environ["AZURE_OPENAI_DEPLOYMENT"] == "file-model"
+        os.environ["AZURE_OPENAI_DEPLOYMENT"] = "environment-model"
+        make_client(tmp_path)
+        assert os.environ["AZURE_OPENAI_DEPLOYMENT"] == "environment-model"
+        for k in ENV:
+            os.environ.pop(k, None)
+        env_file.unlink()
+        _, c3 = make_client(tmp_path)
+        assert c3.get("/api/system").json()["foundry_configured"] is False
     finally:
         for k in ENV:
             os.environ.pop(k, None)
@@ -541,7 +555,9 @@ def test_base_url_style_and_key_hint(tmp_path):
 
 def test_failed_connection_test_shows_what_was_tried_without_the_key(web, monkeypatch):
     app, c = web
-    c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com", "deployment": "gpt-prod", "api_key": "S" * 28 + "WXYZ"})
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://res.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-prod")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "S" * 28 + "WXYZ")
     import vra.llm
 
     class Bad(FakeFoundry):
@@ -556,9 +572,12 @@ def test_failed_connection_test_shows_what_was_tried_without_the_key(web, monkey
     assert "/openai/v1/" in r["error"]
 
 
-def test_try_other_address_styles_finds_the_one_that_works_and_saves_it(web, monkeypatch):
+def test_try_other_address_styles_does_not_change_server_configuration(web, monkeypatch):
     app, c = web
-    c.post("/api/system/foundry", json={"endpoint": "https://res.services.ai.azure.com", "deployment": "gpt-prod", "api_key": "k" * 28 + "WXYZ"})
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://res.services.ai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-prod")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k" * 28 + "WXYZ")
+    before = c.get("/api/system/foundry").json()
     import vra.llm
 
     class OnlyV1(FakeFoundry):
@@ -575,16 +594,14 @@ def test_try_other_address_styles_finds_the_one_that_works_and_saves_it(web, mon
             return "OK"
 
     monkeypatch.setattr(vra.llm, "FoundryChat", OnlyV1)
-    res = c.post("/api/system/foundry/probe", json={}).json()["results"]
+    res = c.post("/api/system/foundry/probe", json={"endpoint": "https://ui.openai.azure.com",
+                                                 "deployment": "ui-model", "api_key": "u" * 32}).json()["results"]
     assert [r["ok"] for r in res] == [False, True] and res[0]["status"] == 401                  # classic fails, v1 works, probing stops
     chosen = res[1]
     assert chosen["base_url"] == "https://res.services.ai.azure.com/openai/v1/"
-    saved = c.post("/api/system/foundry", json={"base_url": chosen["base_url"]}).json()
-    assert saved["base_url"] == chosen["base_url"] and saved["key_set"] is True and saved["key_hint"] == "…WXYZ"
-    assert c.post("/api/system/test-foundry").json()["ok"] is True                              # the saved style is what the test now uses
-    back = c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com", "clear_base_url": True}).json()
-    assert back["base_url"] == "" and back["endpoint"] == "https://res.openai.azure.com"
+    assert c.post("/api/system/foundry", json={"base_url": chosen["base_url"]}).status_code == 403
+    assert c.get("/api/system/foundry").json() == before
+    assert c.post("/api/system/test-foundry").json()["ok"] is False
     rev = login_as(app, "rita", "reviewer")
     assert rev.post("/api/system/foundry/probe", json={}).status_code == 403
-    assert c.post("/api/system/foundry", json={"endpoint": "https://res.openai.azure.com"}).status_code == 200
-    assert "AZURE_OPENAI_BASE_URL" not in (Path(app.state.settings.data_dir) / "foundry.env").read_text(encoding="utf-8")
+    assert not (Path(app.state.settings.data_dir) / "foundry.env").exists()

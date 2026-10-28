@@ -35,8 +35,9 @@ agent misread, decide (resolve / confirm exception / follow-up), then sign off a
 workpaper. Full team guide: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 * `--solo` lets one person sign off their own run (testing). Leave it off for teams: a different reviewer must sign off.
-* Connect Foundry either on the **Settings** page (admin; no restart) or in a `.env` file in the folder you start from
-  (see `.env.example`). Real environment variables win over `.env`; settings saved on the Settings page win over both.
+* Configure Foundry in a `.env` file in the folder you start from (see `.env.example`), then restart the app.
+  Real environment variables win over `.env`. The **Settings** page is read-only for Foundry and can test the connection;
+  previously saved UI settings in `vra_data/foundry.env` are ignored.
   Check it from the command line with `python -m vra check-foundry`.
 * Data (database, uploaded documents, run outputs) lives in `./vra_data` (change with `--data-dir`). Back this folder up.
 
